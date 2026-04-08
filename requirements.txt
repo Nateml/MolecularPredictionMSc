@@ -1,0 +1,4 @@
+cffi==2.0.0
+clingo==5.8.0
+networkx==3.6.1
+pycparser==3.0
