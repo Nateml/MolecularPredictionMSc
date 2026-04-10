@@ -1,12 +1,12 @@
 # Description: Interfaces with the ASP program
 
 import subprocess
-import sys
 import clingo
-import timeit
 import math
-import textwrap
-
+import typing
+import argparse
+from predicates.interface import PredictionInterface, PredictionEntry
+from predicates.compiler import compile_asp_constraint
 
 # I have extracted this function from smiles.lp because my clingo doesn't have python support,
 # so the ASP program can't use #script(python) to call it directly.
@@ -16,36 +16,31 @@ def min_main_chain_len(n):
         2 * math.ceil(math.log(n + 1, 3))
     )
 
-def solve(c, h, n, o):
+
+def solve(asp_code: list[str], atom_counts: int) -> typing.Tuple[str, int]:
     """
     Runs the ASP program with the given input and returns the results.
 
     Args:
-        c (int): The number of carbon atoms
-        h (int): The number of hydrogen atoms
-        n (int): The number of nitrogen atoms
-        o (int): The number of oxygen atoms
+        asp_code (list[str]): A list of strings representing additional ASP code
+        min_num_atoms (int): Minimum number of atoms in the generated molecules
 
     Returns:
         list: A list of candidate molecules returned by the ASP program
     """
 
-    # Set the constants
-    # Add the function for calculating the minimum main chain length
-    num_atoms = n + c + o  # exclude hydrogens
-    k = min_main_chain_len(num_atoms)
-
     ctl = clingo.Control([
-    "0",                 # enumerate all models
-    f"-c c={c}",
-    f"-c h={h}",
-    f"-c n={n}",
-    f"-c o={o}",
-    ])
+        '0',
+        f'-c c={atom_counts['num_carbons']}',
+        f'-c h={atom_counts['num_hydrogens']}',
+        f'-c n={atom_counts['num_nitrogens']}',
+        f'-c o={atom_counts['num_oxygens']}',
+        ])
 
-    program = textwrap.dedent(f"""
-    min_main_chain_len({k}).
-    """)
+
+    k = min_main_chain_len(sum(atom_counts.values()) - atom_counts['num_hydrogens'])
+    program = f"min_main_chain_len({k}).\n" + "\n".join(asp_code)
+
     ctl.add("base", [], program)
 
     # Load the ASP program
@@ -69,21 +64,74 @@ def solve(c, h, n, o):
 
     # Visualise with smiles-vis.py
     result = subprocess.run(
-        ['python', 'asp/smiles-vis.py', '-c'],
+        ['python', 'asp/smiles-vis.py'],
         input=output,
         capture_output=True,
         text=True,
         check=True
     )
 
-    return result.stdout, model_count
+    visualisations = result.stdout.split("\n")
+    asp_output = output.split("\n")
+
+    # Remove unwanted lines
+    visualisations = visualisations[:-2]
+    visualisations = [line.split(':')[1].strip() for line in visualisations]
+    asp_output = asp_output[1:-2:2]
+
+    final_output = ""
+    i = 0
+    for vis, asp in zip(visualisations, asp_output):
+        final_output += f"CANDIDATE {i}:\n{vis}\n{asp}\n\n"
+        i += 1
+
+    return final_output, model_count
 
 def main():
     # Run the ASP program and print the results
+    parser = argparse.ArgumentParser(
+        description='ASP bridge for molecular prediction',
+        epilog='Usage examples:\n'
+               '  python asp_bridge.py --carbons 3 --hydrogens 6 --oxygens 1\n'
+               '  python asp_bridge.py --pred-ids 154 156 --pred-sets 1 2 --pred-sets 3 4\n'
+               '  python asp_bridge.py --carbons 5 --nitrogens 1 --pred-ids 154',
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument('-c', '--carbons', type=int, default=3, help='Number of carbons')
+    parser.add_argument('-y', '--hydrogens', type=int, default=6, help='Number of hydrogens')
+    parser.add_argument('-o', '--oxygens', type=int, default=1, help='Number of oxygens')
+    parser.add_argument('-n', '--nitrogens', type=int, default=0, help='Number of nitrogens')
+    parser.add_argument('--pred-ids', type=int, nargs='+', default=[154], help='Prediction IDs')
+    parser.add_argument('--pred-sets', type=int, nargs='+', action='append', help='Prediction sets for each ID (can specify multiple sets per ID)')
+    args = parser.parse_args()
 
-    example = {"c": 7, "h": 16, "n": 0, "o": 0} 
-    output, num_candidates = solve(**example)
-    print(f"Found {num_candidates} candidates for C{example['c']}H{example['h']}N{example['n']}O{example['o']}\n")
+    predictions = {}
+    
+    # Handle prediction IDs and their associated sets
+    if args.pred_sets:
+        for i, pred_id in enumerate(args.pred_ids):
+            if i < len(args.pred_sets):
+                pred_set = args.pred_sets[i]
+                predictions[pred_id] = PredictionEntry(pred_set=pred_set if isinstance(pred_set, list) else [pred_set])
+            else:
+                predictions[pred_id] = PredictionEntry(pred_set=[1])
+    else:
+        # Default behavior: use default pred_set for all IDs
+        for pred_id in args.pred_ids:
+            predictions[pred_id] = PredictionEntry(pred_set=[1])
+    
+    predictions['num_carbons'] = args.carbons
+    predictions['num_hydrogens'] = args.hydrogens
+    predictions['num_oxygens'] = args.oxygens
+    predictions['num_nitrogens'] = args.nitrogens
+    
+    interface = PredictionInterface.model_validate(predictions)
+    asp_constraints, atom_counts = compile_asp_constraint(interface)
+    print(f"ASP constraints:\n{chr(10).join(asp_constraints)}\n")
+    print(f"Atom counts: {atom_counts}\n")
+
+    output, num_candidates = solve(asp_constraints, atom_counts)
+    print(f"Found {num_candidates} candidates.\n")
     print(output)
 
 if __name__ == "__main__":
