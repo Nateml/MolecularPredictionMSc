@@ -8,13 +8,6 @@ class ASPPredicate(TypedDict):
     definition: str  # The actual predicate definition, e.g. "has_carbonyl :- ..."
     domain: set  # The set of possible values
 
-class ASPConstant(TypedDict):
-    """
-    A constant to be applied in the ASP program, represented as a string.
-    """
-    name: str  # The name of the constant, e.g. "num_carbons"
-    value: int  # The value of the constant, e.g. 7
-
 # Define the MACCS keys and their corresponding ASP constraints
 MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
     154: {
