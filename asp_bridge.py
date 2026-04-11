@@ -17,7 +17,7 @@ def min_main_chain_len(n):
     )
 
 
-def solve(asp_code: list[str], atom_counts: int) -> typing.Tuple[str, int]:
+def solve(asp_code: list[str], atom_counts: int, output_list_of_smiles: bool = False) -> typing.Tuple[str, int]:
     """
     Runs the ASP program with the given input and returns the results.
 
@@ -74,10 +74,14 @@ def solve(asp_code: list[str], atom_counts: int) -> typing.Tuple[str, int]:
     visualisations = result.stdout.split("\n")
     asp_output = output.split("\n")
 
+
     # Remove unwanted lines
     visualisations = visualisations[:-2]
     visualisations = [line.split(':')[1].strip() for line in visualisations]
     asp_output = asp_output[1:-2:2]
+
+    if output_list_of_smiles:
+        return "\n".join(visualisations), model_count
 
     final_output = ""
     i = 0
@@ -124,13 +128,22 @@ def main():
     predictions['num_hydrogens'] = args.hydrogens
     predictions['num_oxygens'] = args.oxygens
     predictions['num_nitrogens'] = args.nitrogens
+
+    # Example predictions
+    # predictions = {
+        # 154: PredictionEntry(pred_set=[1], alpha=0.05, proba=[0.98]),
+        # 'num_carbons': args.carbons,
+        # 'num_hydrogens': args.hydrogens,
+        # 'num_nitrogens': args.nitrogens,
+        # 'num_oxygens': args.oxygens,
+    # }
     
     interface = PredictionInterface.model_validate(predictions)
     asp_constraints, atom_counts = compile_asp_constraint(interface)
     print(f"ASP constraints:\n{chr(10).join(asp_constraints)}\n")
     print(f"Atom counts: {atom_counts}\n")
 
-    output, num_candidates = solve(asp_constraints, atom_counts)
+    output, num_candidates = solve(asp_constraints, atom_counts, output_list_of_smiles=False)  # Set to True to get a copy/pastable list of SMILES strings (useful for pasting into a visualisation tool)
     print(f"Found {num_candidates} candidates.\n")
     print(output)
 

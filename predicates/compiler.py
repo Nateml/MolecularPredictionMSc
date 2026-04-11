@@ -2,8 +2,9 @@ from typing import Tuple
 
 from predicates.definitions import MACCS_DEFINITIONS
 from predicates.interface import PredictionInterface, PredictionEntry
+from predicates.definitions import HELPER_PREDICATES
 
-def compile_asp_constraint(interface: PredictionInterface) -> Tuple[str, dict[str, int]]:
+def compile_asp_constraint(interface: PredictionInterface, HELPERS = HELPER_PREDICATES) -> Tuple[str, dict[str, int]]:
     """
     Compiles the prediction interface into a list of ASP rules and constraints.
 
@@ -14,6 +15,10 @@ def compile_asp_constraint(interface: PredictionInterface) -> Tuple[str, dict[st
     rules = set()
     constraints = []
     atom_counts = {}
+
+    # Compile helper predicates
+    for helper in HELPERS.values():
+        rules.add(helper)
 
     for k, entry in interface.root.items():
 
