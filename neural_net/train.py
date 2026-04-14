@@ -28,20 +28,20 @@ def split_dataset(
 def compute_loss(
     outputs: dict[str, torch.Tensor],
     targets: dict[str, torch.Tensor],
+    binary_loss_fn: nn.Module,
+    categorical_loss_fn: nn.Module,
     binary_weight: float = 1.0,
     categorical_weight: float = 1.0,
     pos_weight: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
 
     # Binary loss (MACCS keys)
-    binary_loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight, reduction='mean')
     loss = binary_weight * binary_loss_fn(outputs["binary"], targets["binary"])
 
     # Categorical loss (atom counts), one CrossEntropyLoss per head
-    ce_loss_fn = nn.CrossEntropyLoss()
     ce_loss = 0.0
     for i, logits in enumerate(outputs["categorical"]):
-        ce_loss += ce_loss_fn(logits, targets["categorical"][i])
+        ce_loss += categorical_loss_fn(logits, targets["categorical"][i])
     ce_loss /= len(outputs["categorical"])  # Average over heads
 
     loss = loss + categorical_weight * ce_loss
@@ -54,12 +54,15 @@ def compute_loss(
 def train_one_epoch(
     model: MultitaskMLP,
     loader: DataLoader,
+    binary_loss_fn: nn.Module,
+    categorical_loss_fn: nn.Module,
     optimizer: torch.optim.Optimizer,
     device: torch.device,
     pos_weight: Optional[torch.Tensor] = None,
 ) -> float:
     model.train()
     total_loss = 0.0
+
 
     for spectra, targets in loader:
         spectra = spectra.to(device)
@@ -70,7 +73,7 @@ def train_one_epoch(
 
         optimizer.zero_grad()
         outputs = model(spectra)
-        loss = compute_loss(outputs, targets, pos_weight=pos_weight)
+        loss = compute_loss(outputs, targets, binary_loss_fn, categorical_loss_fn, pos_weight=pos_weight)
         loss.backward()
         optimizer.step()
 
@@ -83,6 +86,8 @@ def train_one_epoch(
 def evaluate(
     model: MultitaskMLP,
     loader: DataLoader,
+    binary_loss_fn: nn.Module,
+    categorical_loss_fn: nn.Module,
     device: torch.device,
     pos_weight: Optional[torch.Tensor] = None,
 ) -> dict[str, float]:
@@ -100,7 +105,7 @@ def evaluate(
         }
 
         outputs = model(spectra)
-        total_loss += compute_loss(outputs, targets, pos_weight=pos_weight).item() * len(spectra)
+        total_loss += compute_loss(outputs, targets, binary_loss_fn, categorical_loss_fn, pos_weight=pos_weight).item() * len(spectra)
 
         # Binary
         all_binary_probs.append(torch.sigmoid(outputs["binary"]).cpu())
@@ -154,9 +159,12 @@ def train(
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     val_loader   = DataLoader(val_dataset,   batch_size=batch_size)
 
+    binary_loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight, reduction='mean')
+    categorical_loss_fn = nn.CrossEntropyLoss()
+
     for epoch in range(1, n_epochs + 1):
-        train_loss = train_one_epoch(model, train_loader, optimizer, device, pos_weight)
-        val_metrics = evaluate(model, val_loader, device, pos_weight)
+        train_loss = train_one_epoch(model, train_loader, binary_loss_fn, categorical_loss_fn, optimizer, device, pos_weight)
+        val_metrics = evaluate(model, val_loader, binary_loss_fn, categorical_loss_fn, device, pos_weight)
         print(
             f"Epoch {epoch:3d} | "
             f"train_loss={train_loss:.4f} | "
