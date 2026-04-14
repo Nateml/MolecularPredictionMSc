@@ -5,6 +5,9 @@ from typing import Optional
 
 from neural_net.model import MultitaskMLP, categorical_sizes_from_df
 from torch.utils.data import Dataset
+from loguru import logger
+
+from neural_net.logging import create_progress_bar, update_progress_bar
 
 
 # Split
@@ -63,6 +66,7 @@ def train_one_epoch(
     model.train()
     total_loss = 0.0
 
+    progress_bar = create_progress_bar(loader, desc='Training')
 
     for spectra, targets in loader:
         spectra = spectra.to(device)
@@ -76,6 +80,9 @@ def train_one_epoch(
         loss = compute_loss(outputs, targets, binary_loss_fn, categorical_loss_fn, pos_weight=pos_weight)
         loss.backward()
         optimizer.step()
+
+        # Update progres bar
+        update_progress_bar(progress_bar, loss.item())
 
         total_loss += loss.item() * len(spectra)
 
@@ -153,6 +160,9 @@ def train(
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    logger.info(f"Starting training for {n_epochs} epochs with batch size {batch_size} and learning rate {lr:.1e}")
+    logger.info(f"Using device: {device}")
+
     model = model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
@@ -163,15 +173,19 @@ def train(
     categorical_loss_fn = nn.CrossEntropyLoss()
 
     for epoch in range(1, n_epochs + 1):
+        logger.info(f"Epoch {epoch}/{n_epochs}--------------------------------------")
+
         train_loss = train_one_epoch(model, train_loader, binary_loss_fn, categorical_loss_fn, optimizer, device, pos_weight)
         val_metrics = evaluate(model, val_loader, binary_loss_fn, categorical_loss_fn, device, pos_weight)
-        print(
+
+        logger.info(
             f"Epoch {epoch:3d} | "
             f"train_loss={train_loss:.4f} | "
             f"val_loss={val_metrics['loss']:.4f} | "
             f"val_binary_acc={val_metrics['binary_accuracy']:.4f} | "
             f"val_cat_acc={val_metrics['categorical_accuracy']:.4f}"
         )
+        logger.info("-----------------------------------\n")
 
     return model
 
