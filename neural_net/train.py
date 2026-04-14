@@ -3,7 +3,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, random_split
 from typing import Optional
 
-from neural_net.model import MultitaskMLP
+from neural_net.model import MultitaskMLP, categorical_sizes_from_df
 from torch.utils.data import Dataset
 
 
@@ -26,14 +26,22 @@ def split_dataset(
 # Loss
 
 def compute_loss(
-    outputs: dict[str, torch.Tensor],   
+    outputs: dict[str, torch.Tensor],
     targets: dict[str, torch.Tensor],
     binary_weight: float = 1.0,
-    pos_weight: Optional[torch.Tensor] = None,   # class-imbalance correction
+    categorical_weight: float = 1.0,
+    pos_weight: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
-    
-    loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-    loss = binary_weight * loss_fn(outputs["binary"], targets["binary"])
+
+    # Binary loss (MACCS keys)
+    binary_loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    loss = binary_weight * binary_loss_fn(outputs["binary"], targets["binary"])
+
+    # Categorical loss (atom counts), one CrossEntropyLoss per head
+    ce_loss_fn = nn.CrossEntropyLoss()
+    for i, logits in enumerate(outputs["categorical"]):
+        loss = loss + categorical_weight * ce_loss_fn(logits, targets["categorical"][i])
+
     return loss
 
 
@@ -74,7 +82,8 @@ def evaluate(
 
     model.eval()
     total_loss = 0.0
-    all_probs, all_labels = [], []
+    all_binary_probs,  all_binary_labels  = [], []
+    all_cat_preds,     all_cat_labels     = [], []
 
     for spectra, targets in loader:
         spectra = spectra.to(device)
@@ -83,18 +92,34 @@ def evaluate(
         outputs = model(spectra)
         total_loss += compute_loss(outputs, targets, pos_weight=pos_weight).item() * len(spectra)
 
-        all_probs.append(torch.sigmoid(outputs["binary"]).cpu())
-        all_labels.append(targets["binary"].cpu())
+        # Binary
+        all_binary_probs.append(torch.sigmoid(outputs["binary"]).cpu())
+        all_binary_labels.append(targets["binary"].cpu())
 
-    all_probs  = torch.cat(all_probs)   
-    all_labels = torch.cat(all_labels)  
+        # Categorical 
+        batch_cat_preds  = [logits.argmax(dim=1).cpu() for logits in outputs["categorical"]]
+        batch_cat_labels = [t.cpu() for t in targets["categorical"]]
+        all_cat_preds.append(batch_cat_preds)
+        all_cat_labels.append(batch_cat_labels)
 
-    preds    = (all_probs >= 0.5).float()
-    accuracy = (preds == all_labels).float().mean().item()
+    # Binary accuracy
+    all_binary_probs  = torch.cat(all_binary_probs)
+    all_binary_labels = torch.cat(all_binary_labels)
+    binary_acc = ((all_binary_probs >= 0.5).float() == all_binary_labels).float().mean().item()
+
+    # Categorical accuracy (average across all heads)
+    n_heads = len(all_cat_preds[0])
+    cat_acc = 0.0
+    for i in range(n_heads):
+        preds  = torch.cat([batch[i] for batch in all_cat_preds])
+        labels = torch.cat([batch[i] for batch in all_cat_labels])
+        cat_acc += (preds == labels).float().mean().item()
+    cat_acc /= n_heads
 
     return {
-        "loss":            total_loss / len(loader.dataset),
-        "binary_accuracy": accuracy,
+        "loss":                total_loss / len(loader.dataset),
+        "binary_accuracy":     binary_acc,
+        "categorical_accuracy": cat_acc,
     }
 
 
@@ -126,18 +151,29 @@ def train(
             f"Epoch {epoch:3d} | "
             f"train_loss={train_loss:.4f} | "
             f"val_loss={val_metrics['loss']:.4f} | "
-            f"val_acc={val_metrics['binary_accuracy']:.4f}"
+            f"val_binary_acc={val_metrics['binary_accuracy']:.4f} | "
+            f"val_cat_acc={val_metrics['categorical_accuracy']:.4f}"
         )
 
     return model
 
 
-# Entry point 
-# Run once the data pipeline is ready
+# Entry point — fill in once the data pipeline is ready
+#
+#   spectra       : 2D array/tensor of shape (n_samples, spectrum_len)
+#   feature_df    : DataFrame with only feature columns (no smiles/inchikey/etc.)
+#   binary_cols   : list of MACCS key column names (e.g. ["maccs_1", ..., "maccs_166"])
+#   dataset       : a torch Dataset whose __getitem__ returns
+#                     (spectrum_tensor, {"binary": tensor, "categorical": [tensor, ...]})
+#
+#   categorical_sizes = categorical_sizes_from_df(feature_df, binary_cols)
+#
+#   model = MultitaskMLP(
+#       spectrum_len      = spectra.shape[1],
+#       num_binary        = len(binary_cols),
+#       categorical_sizes = categorical_sizes,
+#   )
 #
 #   train_ds, val_ds, test_ds = split_dataset(dataset)
-#
-#   model = MultitaskMLP()
 #   train(model, train_ds, val_ds)
-#
 #   test_metrics = evaluate(model, DataLoader(test_ds, batch_size=64), device)
