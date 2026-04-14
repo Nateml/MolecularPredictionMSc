@@ -59,7 +59,10 @@ def train_one_epoch(
 
     for spectra, targets in loader:
         spectra = spectra.to(device)
-        targets = {k: v.to(device) for k, v in targets.items()}
+        targets = {
+            "binary":      targets["binary"].to(device),
+            "categorical": [t.to(device) for t in targets["categorical"]],
+        }
 
         optimizer.zero_grad()
         outputs = model(spectra)
@@ -87,7 +90,10 @@ def evaluate(
 
     for spectra, targets in loader:
         spectra = spectra.to(device)
-        targets = {k: v.to(device) for k, v in targets.items()}
+        targets = {
+            "binary":      targets["binary"].to(device),
+            "categorical": [t.to(device) for t in targets["categorical"]],
+        }
 
         outputs = model(spectra)
         total_loss += compute_loss(outputs, targets, pos_weight=pos_weight).item() * len(spectra)
