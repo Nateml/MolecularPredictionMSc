@@ -34,13 +34,17 @@ def compute_loss(
 ) -> torch.Tensor:
 
     # Binary loss (MACCS keys)
-    binary_loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    binary_loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight, reduction='mean')
     loss = binary_weight * binary_loss_fn(outputs["binary"], targets["binary"])
 
     # Categorical loss (atom counts), one CrossEntropyLoss per head
     ce_loss_fn = nn.CrossEntropyLoss()
+    ce_loss = 0.0
     for i, logits in enumerate(outputs["categorical"]):
-        loss = loss + categorical_weight * ce_loss_fn(logits, targets["categorical"][i])
+        ce_loss += ce_loss_fn(logits, targets["categorical"][i])
+    ce_loss /= len(outputs["categorical"])  # Average over heads
+
+    loss = loss + categorical_weight * ce_loss
 
     return loss
 
