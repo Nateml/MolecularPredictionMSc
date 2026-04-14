@@ -16,9 +16,18 @@ Input records are expected to include:
     }
 
 Output fields added per record:
-    - structural_features_onehot: dictionary of one-hot feature -> 0/1
-    - structural_vector_onehot: one-hot vector in fixed order
-    - feature_vector_onehot: maccs + structural_vector_onehot
+    - structural_vector_onehot_packed_b64 (default): packed bits, base64 encoded
+    - feature_vector_onehot_packed_b64 (default): packed bits, base64 encoded
+    - *_nbits fields for exact unpacking length
+    - combined_packed_b64 / combined_nbits aliases for compact pipelines
+
+Optional (disabled by default to keep files small):
+    - structural_features_onehot dictionary
+    - dense structural_vector_onehot and feature_vector_onehot
+
+Compact-only mode:
+    - keeps only `spectrum`, `combined_packed_b64`, and `combined_nbits`
+      (plus optional `smiles` if requested)
 
 A companion schema file is also written to map one-hot indices to names.
 
@@ -30,8 +39,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import base64
 import json
-import math
 import sys
 from pathlib import Path
 
@@ -241,6 +250,16 @@ def to_int_list(values: object) -> list[int] | None:
         return None
 
 
+def pack_bits(values: list[int]) -> bytes:
+    """Pack a list of 0/1 ints into bytes (MSB first per byte)."""
+    n_bits = len(values)
+    out = bytearray((n_bits + 7) // 8)
+    for i, bit in enumerate(values):
+        if bit:
+            out[i // 8] |= 1 << (7 - (i % 8))
+    return bytes(out)
+
+
 def run(
     input_path: Path,
     output_path: Path,
@@ -249,6 +268,11 @@ def run(
     maccs_field: str,
     discrete_max_values: int,
     continuous_bins: int,
+    store_packed_targets: bool,
+    keep_dense_vectors: bool,
+    keep_onehot_dict: bool,
+    compact_only: bool,
+    keep_smiles_in_compact: bool,
 ) -> None:
     print(f"Loading {input_path} ...")
     with open(input_path, "r", encoding="utf-8") as f:
@@ -289,11 +313,33 @@ def run(
                 continue
 
             onehot_dict, onehot_vec = encode_one_record(feats, onehot_names, schema)
+            feature_vec = maccs + onehot_vec
 
-            out = dict(record)
-            out["structural_features_onehot"] = onehot_dict
-            out["structural_vector_onehot"] = onehot_vec
-            out["feature_vector_onehot"] = maccs + onehot_vec
+            if compact_only:
+                out = {}
+                if "spectrum" in record:
+                    out["spectrum"] = record["spectrum"]
+                if keep_smiles_in_compact and "smiles" in record:
+                    out["smiles"] = record["smiles"]
+            else:
+                out = dict(record)
+
+            if not compact_only and keep_onehot_dict:
+                out["structural_features_onehot"] = onehot_dict
+            if not compact_only and keep_dense_vectors:
+                out["structural_vector_onehot"] = onehot_vec
+                out["feature_vector_onehot"] = feature_vec
+
+            if store_packed_targets:
+                structural_packed = pack_bits(onehot_vec)
+                feature_packed = pack_bits(feature_vec)
+                out["structural_vector_onehot_nbits"] = len(onehot_vec)
+                out["feature_vector_onehot_nbits"] = len(feature_vec)
+                out["structural_vector_onehot_packed_b64"] = base64.b64encode(structural_packed).decode("ascii")
+                out["feature_vector_onehot_packed_b64"] = base64.b64encode(feature_packed).decode("ascii")
+                # Compact pipeline aliases.
+                out["combined_nbits"] = len(feature_vec)
+                out["combined_packed_b64"] = out["feature_vector_onehot_packed_b64"]
 
             if not first:
                 f_out.write(",\n")
@@ -312,6 +358,9 @@ def run(
         "maccs_length": 167,
         "onehot_length": len(onehot_names),
         "feature_vector_onehot_length": 167 + len(onehot_names),
+        "packed_bit_order": "msb_first",
+        "compact_combined_field_b64": "combined_packed_b64",
+        "compact_combined_field_nbits": "combined_nbits",
         "onehot_names": onehot_names,
         "feature_schema": schema,
         "feature_vector_index_map": [
@@ -328,6 +377,11 @@ def run(
     print(f"  Dropped (no valid maccs): {dropped_no_maccs:,}")
     print(f"  One-hot structural dims:  {len(onehot_names):,}")
     print(f"  Total feature dims:       {167 + len(onehot_names):,}")
+    print(f"  Packed targets enabled:   {store_packed_targets}")
+    print(f"  Dense vectors kept:       {keep_dense_vectors}")
+    print(f"  One-hot dict kept:        {keep_onehot_dict}")
+    print(f"  Compact-only mode:        {compact_only}")
+    print(f"  Keep smiles in compact:   {keep_smiles_in_compact}")
     print(f"  Output data:              {output_path}")
     print(f"  Output schema:            {schema_output}")
 
@@ -384,6 +438,33 @@ def parse_args() -> argparse.Namespace:
         default=6,
         help="Quantile bins used for non-discrete/high-cardinality numeric features.",
     )
+    parser.add_argument(
+        "--store-packed-targets",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Store packed bit vectors (base64) for one-hot targets.",
+    )
+    parser.add_argument(
+        "--keep-dense-vectors",
+        action="store_true",
+        help="Keep dense one-hot vectors in JSON (larger files).",
+    )
+    parser.add_argument(
+        "--keep-onehot-dict",
+        action="store_true",
+        help="Keep structural_features_onehot dictionary in JSON (largest output).",
+    )
+    parser.add_argument(
+        "--compact-only",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Keep only compact fields (spectrum + combined packed target).",
+    )
+    parser.add_argument(
+        "--keep-smiles-in-compact",
+        action="store_true",
+        help="In compact-only mode, also keep the smiles field.",
+    )
     return parser.parse_args()
 
 
@@ -404,4 +485,9 @@ if __name__ == "__main__":
         maccs_field=args.maccs_field,
         discrete_max_values=args.discrete_max_values,
         continuous_bins=args.continuous_bins,
+        store_packed_targets=args.store_packed_targets,
+        keep_dense_vectors=args.keep_dense_vectors,
+        keep_onehot_dict=args.keep_onehot_dict,
+        compact_only=args.compact_only,
+        keep_smiles_in_compact=args.keep_smiles_in_compact,
     )
