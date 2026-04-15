@@ -209,3 +209,7 @@ __marimo__/
 
 #jsons of data should not be tracked
 *.json
+
+
+#ignore model checkpoints
+*.pt

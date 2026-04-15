@@ -1,0 +1,149 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Dict, List
+import torch.nn as nn
+
+import torch
+
+from neural_net.model import MultitaskMLP
+from neural_net.onehot_decoded_dataset import OneHotDecodedDataset
+from neural_net.train import split_dataset, evaluate, compute_loss
+from torch.utils.data import DataLoader
+import torch.optim as optim
+
+
+# --- Hard-coded configuration (intentionally not generalized) ---
+DATA_PATH = Path("Data Processing/MoNa/MoNA-filtered-curated-with-maccs-and-structure-onehot.json")
+SCHEMA_PATH = Path("Data Processing/MoNa/feature_vector_onehot_schema.json")
+OUTPUT_PATH = Path("models/multitask_mlp_hardcoded.pt")
+
+SPECTRUM_LEN = 1000
+HIDDEN_DIMS: List[int] = [512, 256, 128]
+DROPOUT = 0.3
+EPOCHS = 20
+BATCH_SIZE = 64
+LR = 1e-3
+TRAIN_FRACTION = 0.7
+VAL_FRACTION = 0.15
+
+
+def run_hardcoded_training() -> None:
+    # Load schema
+    with open(SCHEMA_PATH, "r", encoding="utf-8") as f:
+        schema = json.load(f)
+
+    maccs_length = int(schema.get("maccs_length", 167))
+
+    # Build dataset (compact one-hot packed format)
+    dataset = OneHotDecodedDataset(
+        data_path=DATA_PATH,
+        schema_path=SCHEMA_PATH,
+        spectrum_len=SPECTRUM_LEN,
+    )
+
+    # Build categorical_sizes dict in the dataset's feature order to ensure matching heads
+    feature_schema = schema["feature_schema"]
+    categorical_sizes: Dict[str, int] = {}
+    for feat in dataset.feature_order:
+        spec = feature_schema.get(feat)
+        if spec is None:
+            raise ValueError(f"Feature {feat} missing from schema.feature_schema")
+        categorical_sizes[feat] = len(spec["onehot_names"])
+
+    # Construct model
+    model = MultitaskMLP(
+        spectrum_len=SPECTRUM_LEN,
+        hidden_dims=HIDDEN_DIMS,
+        num_binary=maccs_length,
+        categorical_sizes=categorical_sizes,
+        dropout=DROPOUT,
+    )
+
+    # Split dataset
+    train_ds, val_ds, test_ds = split_dataset(dataset, train_fraction=TRAIN_FRACTION, val_fraction=VAL_FRACTION)
+
+    # Auto device selection
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Training on device: {device}")
+
+    # Prepare optimizer, loss fns and dataloaders
+    model = model.to(device)
+    optimizer = optim.Adam(model.parameters(), lr=LR)
+
+    binary_loss_fn = nn.BCEWithLogitsLoss(reduction='mean')
+    categorical_loss_fn = nn.CrossEntropyLoss()
+
+    train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True)
+    val_loader = DataLoader(val_ds, batch_size=BATCH_SIZE)
+
+    # Checkpoint/resume support
+    # If OUTPUT_PATH exists and contains epoch, resume from next epoch.
+    start_epoch = 1
+    checkpoint_path_latest = OUTPUT_PATH.with_suffix('.latest.pt')
+    if checkpoint_path_latest.exists():
+        print(f"Found checkpoint {checkpoint_path_latest}, attempting to resume...")
+        ckpt = torch.load(checkpoint_path_latest, map_location=device)
+        model.load_state_dict(ckpt["model_state_dict"]) 
+        optimizer.load_state_dict(ckpt.get("optimizer_state_dict", {}))
+        start_epoch = int(ckpt.get("epoch", 0)) + 1
+        print(f"Resuming from epoch {start_epoch}")
+
+    best_val_loss = float("inf")
+    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    for epoch in range(start_epoch, EPOCHS + 1):
+        # Training loop (inline to ensure correct signature/behavior)
+        model.train()
+        total_loss = 0.0
+        for spectra, targets in train_loader:
+            spectra = spectra.to(device)
+            targets = {
+                "binary": targets["binary"].to(device),
+                "categorical": [t.to(device) for t in targets["categorical"]],
+            }
+            optimizer.zero_grad()
+            outputs = model(spectra)
+            loss = compute_loss(outputs, targets, binary_loss_fn, categorical_loss_fn)
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item() * len(spectra)
+
+        train_loss = total_loss / len(train_loader.dataset)
+        val_metrics = evaluate(model, val_loader, binary_loss_fn, categorical_loss_fn, device)
+
+        print(
+            f"Epoch {epoch:3d} | "
+            f"train_loss={train_loss:.4f} | "
+            f"val_loss={val_metrics['loss']:.4f} | "
+            f"val_binary_acc={val_metrics['binary_accuracy']:.4f} | "
+            f"val_cat_acc={val_metrics['categorical_accuracy']:.4f}"
+        )
+
+        # Save latest checkpoint
+        latest_ckpt = {
+            "epoch": epoch,
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "categorical_sizes": categorical_sizes,
+            "maccs_length": maccs_length,
+        }
+        torch.save(latest_ckpt, checkpoint_path_latest)
+
+        # Save best model separately
+        if val_metrics["loss"] < best_val_loss:
+            best_val_loss = val_metrics["loss"]
+            torch.save({
+                "epoch": epoch,
+                "model_state_dict": model.state_dict(),
+                "categorical_sizes": categorical_sizes,
+                "maccs_length": maccs_length,
+            }, OUTPUT_PATH)
+            print(f"Saved best model to {OUTPUT_PATH}")
+
+    print("Training complete.")
+
+
+if __name__ == "__main__":
+    run_hardcoded_training()

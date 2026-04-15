@@ -204,11 +204,10 @@ def filter_mona_json(
 
 
 if __name__ == "__main__":
-    input_path     = Path("C:\\Users\\Tom\\Documents\\Planning\\MolecularPredictionMSc\\Data Processing\\MoNa\\MoNA-export-All_Spectra.json")
-    output_all     = Path("C:\\Users\\Tom\\Documents\\Planning\\MolecularPredictionMSc\\Data Processing\\MoNa\\MoNA-filtered-all.json")
-    output_curated = Path("C:\\Users\\Tom\\Documents\\Planning\\MolecularPredictionMSc\\Data Processing\\MoNa\\MoNA-filtered-curated.json")
-    output_model   = Path("C:\\Users\\Tom\\Documents\\Planning\\MolecularPredictionMSc\\Data Processing\\MoNa\\MoNA-filtered-Sparse.json")
-
+    input_path     = Path("C:\\Users\\Tom\\Desktop\\Nieuwe map\\MolecularPredictionMSc\\Data Processing\\MoNa\\MoNA-export-All_Spectra.json")
+    output_all     = Path("C:\\Users\\Tom\\Desktop\\Nieuwe map\\MolecularPredictionMSc\\Data Processing\\MoNa\\MoNA-filtered-All_Spectra.json")
+    output_curated = Path("C:\\Users\\Tom\\Desktop\\Nieuwe map\\MolecularPredictionMSc\\Data Processing\\MoNa\\MoNA-filtered-curated-All_Spectra.json")
+    output_model   = Path("C:\\Users\\Tom\\Desktop\\Nieuwe map\\MolecularPredictionMSc\\Data Processing\\MoNa\\MoNA-filtered-model-All_Spectra.json")
     if not input_path.exists():
         sys.exit(f"Input file not found: {input_path}")
 

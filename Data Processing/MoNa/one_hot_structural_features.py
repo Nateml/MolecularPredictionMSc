@@ -193,6 +193,151 @@ def build_feature_schema(
     return onehot_names, schema
 
 
+def iter_json_array(path: Path):
+    """Yield objects from a large JSON file containing a top-level array.
+
+    This uses incremental buffering and json.JSONDecoder.raw_decode so the
+    whole file is never loaded into memory.
+    """
+    decoder = json.JSONDecoder()
+    with open(path, "r", encoding="utf-8") as f:
+        # Skip whitespace and initial '['
+        chunk = f.read(1)
+        while chunk and chunk.isspace():
+            chunk = f.read(1)
+        if not chunk:
+            return
+        if chunk != "[":
+            # Not an array: try to decode single object
+            f.seek(0)
+            buf = f.read()
+            obj, _ = decoder.raw_decode(buf)
+            yield obj
+            return
+
+        buffer = ""
+        EOF = False
+        while True:
+            chunk = f.read(65536)
+            if not chunk:
+                EOF = True
+            buffer += chunk
+
+            while True:
+                buffer = buffer.lstrip()
+                if not buffer:
+                    break
+                # Stop if array end
+                if buffer[0] == "]":
+                    return
+                # Skip commas between elements
+                if buffer[0] == ",":
+                    buffer = buffer[1:]
+                    continue
+                try:
+                    obj, idx = decoder.raw_decode(buffer)
+                except ValueError:
+                    # Need more data
+                    break
+                yield obj
+                buffer = buffer[idx:]
+            if EOF:
+                break
+
+
+def build_feature_schema_stream(
+    input_path: Path,
+    source_field: str,
+    discrete_max_values: int,
+    continuous_bins: int,
+    sample_per_feature: int = 10000,
+) -> tuple[list[str], dict[str, dict], int]:
+    """Build schema by streaming through the input JSON array.
+
+    To avoid unbounded memory growth, this function:
+    - collects up to `sample_per_feature` numeric samples per feature for binning
+    - collects unique non-numeric categories up to `discrete_max_values + 1`
+    Returns (onehot_names, schema, total_records_seen).
+    """
+    per_feature_numeric: dict[str, list[float]] = {}
+    per_feature_uniques: dict[str, set] = {}
+    per_feature_has_numeric: dict[str, bool] = {}
+    total = 0
+
+    for record in iter_json_array(input_path):
+        total += 1
+        feats = record.get(source_field)
+        if not isinstance(feats, dict):
+            continue
+        for name, value in feats.items():
+            # Track whether we have numeric values for this feature
+            if name not in per_feature_has_numeric:
+                per_feature_has_numeric[name] = True
+
+            # Try numeric
+            try:
+                v = float(value)
+            except Exception:
+                # Non-numeric: track unique string categories (bounded)
+                per_feature_has_numeric[name] = per_feature_has_numeric.get(name, False) or False
+                s = per_feature_uniques.setdefault(name, set())
+                if len(s) <= discrete_max_values + 1:
+                    s.add(str(value))
+                continue
+
+            # Numeric path: add to numeric sample up to limit
+            lst = per_feature_numeric.setdefault(name, [])
+            if len(lst) < sample_per_feature:
+                lst.append(v)
+
+    # Build schema using sampled/collected values
+    # Reuse existing build logic by synthesizing small records list where needed.
+    synthesized_records: list[dict] = []
+    for feat_name in set(list(per_feature_numeric.keys()) + list(per_feature_uniques.keys())):
+        rec = {feat_name: None}
+        synthesized_records.append({source_field: rec})
+
+    onehot_names: list[str] = []
+    schema: dict[str, dict] = {}
+
+    # For each feature, decide encoding like original function but using samples
+    for feat_name in sorted(set(list(per_feature_numeric.keys()) + list(per_feature_uniques.keys()))):
+        numeric_samples = per_feature_numeric.get(feat_name, [])
+        string_uniques = per_feature_uniques.get(feat_name, set())
+
+        if numeric_samples:
+            # numeric: decide bins
+            bins = max(2, continuous_bins)
+            edges = quantile_edges(numeric_samples, bins)
+            labels = make_bin_labels(edges)
+            cat_names = []
+            for i, label in enumerate(labels):
+                name = f"{feat_name}_bin_{i}:{label}"
+                cat_names.append(name)
+                onehot_names.append(name)
+            schema[feat_name] = {
+                "encoding": "binned",
+                "edges": edges,
+                "labels": labels,
+                "onehot_names": cat_names,
+            }
+        else:
+            # treat as string categories limited by collected uniques
+            categories = sorted(string_uniques)
+            cat_names = []
+            for cat in categories:
+                name = f"{feat_name}={sanitize_value_for_name(cat)}"
+                cat_names.append(name)
+                onehot_names.append(name)
+            schema[feat_name] = {
+                "encoding": "exact-string",
+                "categories": categories,
+                "onehot_names": cat_names,
+            }
+
+    return onehot_names, schema, total
+
+
 def encode_one_record(
     feats: dict,
     onehot_names: list[str],
@@ -274,15 +419,9 @@ def run(
     compact_only: bool,
     keep_smiles_in_compact: bool,
 ) -> None:
-    print(f"Loading {input_path} ...")
-    with open(input_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-
-    if not isinstance(data, list) or not data:
-        sys.exit("Input JSON is empty or not a list.")
-
-    onehot_names, schema = build_feature_schema(
-        records=data,
+    print(f"Scanning {input_path} to build schema (streaming)...")
+    onehot_names, schema, total_records = build_feature_schema_stream(
+        input_path=input_path,
         source_field=source_field,
         discrete_max_values=discrete_max_values,
         continuous_bins=continuous_bins,
@@ -297,11 +436,12 @@ def run(
     dropped_no_source = 0
     dropped_no_maccs = 0
 
+    print(f"Processing and writing output to {output_path} (streaming)...")
     with open(output_path, "w", encoding="utf-8") as f_out:
         f_out.write("[\n")
         first = True
 
-        for i, record in enumerate(data, start=1):
+        for i, record in enumerate(iter_json_array(input_path), start=1):
             feats = record.get(source_field)
             if not isinstance(feats, dict):
                 dropped_no_source += 1
@@ -372,7 +512,7 @@ def run(
         json.dump(schema_payload, f_schema, indent=2)
 
     print("\nFinished.")
-    print(f"  Kept records:             {kept:,} / {len(data):,}")
+    print(f"  Kept records:             {kept:,} / {total_records:,}")
     print(f"  Dropped (no source):      {dropped_no_source:,}")
     print(f"  Dropped (no valid maccs): {dropped_no_maccs:,}")
     print(f"  One-hot structural dims:  {len(onehot_names):,}")
@@ -394,7 +534,7 @@ def parse_args() -> argparse.Namespace:
         "--input",
         type=Path,
         default=Path(
-            "C:/Users/Tom/Documents/Planning/MolecularPredictionMSc/Data Processing/MoNa/MoNA-filtered-curated-with-maccs-and-structure.json"
+            "C:\\Users\\Tom\\Desktop\\Nieuwe map\\MolecularPredictionMSc\\Data Processing\\MoNa\\MoNA-filtered-curated-with-maccs-and-structure.json"
         ),
         help="Input JSON path.",
     )
@@ -402,7 +542,7 @@ def parse_args() -> argparse.Namespace:
         "--output",
         type=Path,
         default=Path(
-            "C:/Users/Tom/Documents/Planning/MolecularPredictionMSc/Data Processing/MoNa/MoNA-filtered-curated-with-maccs-and-structure-onehot.json"
+            "C:\\Users\\Tom\\Desktop\\Nieuwe map\\MolecularPredictionMSc\\Data Processing\\MoNa\\MoNA-filtered-curated-with-maccs-and-structure-onehot.json"
         ),
         help="Output JSON path with one-hot features added.",
     )
@@ -410,7 +550,7 @@ def parse_args() -> argparse.Namespace:
         "--schema-output",
         type=Path,
         default=Path(
-            "C:/Users/Tom/Documents/Planning/MolecularPredictionMSc/Data Processing/MoNa/feature_vector_onehot_schema.json"
+            "C:\\Users\\Tom\\Desktop\\Nieuwe map\\MolecularPredictionMSc\\Data Processing\\MoNa\\feature_vector_onehot_schema.json"
         ),
         help="Output JSON schema/index map path.",
     )

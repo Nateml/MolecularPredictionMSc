@@ -465,7 +465,7 @@ def parse_args() -> argparse.Namespace:
         "--input",
         type=Path,
         default=Path(
-            "C:/Users/Tom/Documents/Planning/MolecularPredictionMSc/Data Processing/MoNa/MoNA-filtered-curated-with-maccs.json"
+            "C:\\Users\\Tom\\Desktop\\Nieuwe map\\MolecularPredictionMSc\\Data Processing\\MoNa\\MoNA-filtered-curated-with-maccs.json"
         ),
         help="Path to the input JSON file containing smiles, spectrum, and MACCS vectors.",
     )
@@ -473,7 +473,7 @@ def parse_args() -> argparse.Namespace:
         "--output",
         type=Path,
         default=Path(
-            "C:/Users/Tom/Documents/Planning/MolecularPredictionMSc/Data Processing/MoNa/MoNA-filtered-curated-with-maccs-and-structure.json"
+            "C:\\Users\\Tom\\Desktop\\Nieuwe map\\MolecularPredictionMSc\\Data Processing\\MoNa\\MoNA-filtered-curated-with-maccs-and-structure.json"
         ),
         help="Path to the output JSON file.",
     )
