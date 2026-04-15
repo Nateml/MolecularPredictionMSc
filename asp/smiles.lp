@@ -1,4 +1,4 @@
-% Source: eval-2024-asp-molecules (commit: 8fe473e) (modified by removing embedded python code)
+% Source: eval-2024-asp-molecules (commit: 8fe473e) (modified by removing embedded python code and adding P and S as elements)
 % URL: https://github.com/knowsys/eval-2024-asp-molecules
 % File: smiles.lp
 % INPUT: C_{c}H_{h},O_{o}
@@ -7,18 +7,28 @@
 #const h=0.
 #const n=0.
 #const o=0.
+#const p=0.
+#const s=0.
+
 
 molecular_formula("C", c) :- c != 0.
 molecular_formula("H", h) :- h != 0.
 molecular_formula("N", n) :- n != 0.
 molecular_formula("O", o) :- o != 0.
+molecular_formula("P", p) :- p != 0.
+molecular_formula("S", s) :- s != 0.
 
 element("C", 6, 4) :- molecular_formula("C", C), C > 0.
 element("H", 1, 1) :- molecular_formula("H", H), H > 0.
 element("N", 7, 3) :- molecular_formula("N", N), N > 0.
 element("O", 8, 2) :- molecular_formula("O", O), O > 0.
+element("P", 15, 3) :- molecular_formula("P", P), P > 0.
+element("S", 16, 2) :- molecular_formula("S", S), S > 0.
 
 % To allow alternative valence values for an element, add e.g. `element_valence("C",2)`.
+element_valence("P", 5).
+element_valence("S", 4).
+element_valence("S", 6).
 
 % A version of this file without comments and without the INPUT section and the embedded Python code (will require setting `main_chain_len` programmatically) was produced with the following command:
 % $> sed '1,18d; 60,72d; s/[^%].*@min_main_chain_len.*/1{ main_chain_len(MIN_LEN..ATOM_COUNT) }1 :- non_hydrogen_atom_count(ATOM_COUNT), min_main_chain_len(MIN_LEN)./; /^[ \t]*%/d; s/[ \t]*%.*$//; /^[ \t]*# /d' smiles.lp | cat -s > smiles_min.lp
@@ -82,17 +92,17 @@ atom(1..ATOM_COUNT) :- non_hydrogen_atom_count(ATOM_COUNT).
 
 
 % Compute, how many atoms have which valnce value.
-valence(1;3;4).
+valence(1;3;4;5;6).
 valence_count(VALENCE, X) :- X = #sum{ COUNT, ELEMENT : molecular_formula(ELEMENT, COUNT), element(ELEMENT, _, VALENCE) }, valence(VALENCE), not element_valence(_, VALENCE).
 element_valence(ELEMENT, VALENCE) :- element(ELEMENT, _, VALENCE), element_valence(ELEMENT, _).
 1{ element_valence_count(ELEMENT, VALENCE, 0..COUNT) }1 :- element_valence(ELEMENT, VALENCE), molecular_formula(ELEMENT, COUNT).
 :- molecular_formula(ELEMENT, COUNT), COUNT != #sum{ C, VALENCE : element_valence_count(ELEMENT, VALENCE, C) }, element_valence(ELEMENT, _).
 valence_count(VALENCE, X) :- X = #sum{ COUNT, ELEMENT : element_valence_count(ELEMENT, VALENCE, COUNT) }, element_valence(_, VALENCE).
 % Compute, how many cycles / multi-bonds there should be, based on the hydrogen count in the sum formula.
-num_cycles_or_multi_bonds((2*C+2 + N - H) / 2) :- valence_count(4, C), valence_count(3, N), valence_count(1, H).
+num_cycles_or_multi_bonds((2*C+2 + N - H + 3*P5 + 4*S6) / 2) :- valence_count(4, C), valence_count(3, N), valence_count(1, H), valence_count(5, P5), valence_count(6, S6).
 % SENIOR rules (adaptation)
-:- valence_count(4, C), valence_count(3, N), valence_count(1, H), 2*C+2 + N < H. % --> cannot have too many atoms with valence 1
-:- valence_count(4, C), valence_count(3, N), valence_count(1, H), (2*C+2 + N - H) \ 2 != 0. % --> cannot have "half a cycle"
+:- valence_count(4, C), valence_count(3, N), valence_count(5, P5), valence_count(6, S6), valence_count(1, H), 2*C+2 + N + 3*P5 + 4*S6 < H. % --> cannot have too many atoms with valence 1
+:- valence_count(4, C), valence_count(3, N), valence_count(5, P5), valence_count(6, S6), valence_count(1, H), (2*C+2 + N + 3*P5 + 4*S6 - H) \ 2 != 0. % --> cannot have "half a cycle"
 % Nondeterministically decide how many multi-bonds and cycles there should be.
 1{ num_multi_bonds(0..NUM_CYCLES_OR_MULTI_BONDS) }1 :- num_cycles_or_multi_bonds(NUM_CYCLES_OR_MULTI_BONDS), NUM_CYCLES_OR_MULTI_BONDS > 0.
 num_multi_bonds(0) :- num_cycles_or_multi_bonds(0).
