@@ -81,7 +81,9 @@ def solve(asp_code: list[str], atom_counts: int, output_list_of_smiles: bool = F
     asp_output = asp_output[1:-2:2]
 
     if output_list_of_smiles:
-        return "\n".join(visualisations), model_count
+        # return "\n".join(visualisations), model_count
+        # Return a list of SMILES strings
+        return visualisations, model_count
 
     final_output = ""
     i = 0
