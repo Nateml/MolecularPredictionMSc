@@ -3,13 +3,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Dict, List
+from loguru import logger
 import torch.nn as nn
 
 import torch
 
 from neural_net.model import MultitaskMLP
 from neural_net.onehot_decoded_dataset import OneHotDecodedDataset
-from neural_net.train import split_dataset, evaluate, compute_loss
+from neural_net.train import split_dataset, evaluate, compute_loss, train
 from torch.utils.data import DataLoader
 import torch.optim as optim
 
@@ -144,6 +145,58 @@ def run_hardcoded_training() -> None:
 
     print("Training complete.")
 
+def main():
+    # Load schema
+    logger.info(f"Loading schema from {SCHEMA_PATH}...")
+    with open(SCHEMA_PATH, "r", encoding="utf-8") as f:
+        schema = json.load(f)
+
+    maccs_length = int(schema.get("maccs_length", 167))
+
+    # Build dataset (compact one-hot packed format)
+    logger.info(f"Building dataset from {DATA_PATH}...")
+    dataset = OneHotDecodedDataset(
+        data_path=DATA_PATH,
+        schema_path=SCHEMA_PATH,
+        spectrum_len=SPECTRUM_LEN,
+    )
+
+    # Build categorical_sizes dict in the dataset's feature order to ensure matching heads
+    logger.info("Deriving categorical_sizes from dataset and schema...")
+    feature_schema = schema["feature_schema"]
+    categorical_sizes: Dict[str, int] = {}
+    for feat in dataset.feature_order:
+        spec = feature_schema.get(feat)
+        if spec is None:
+            raise ValueError(f"Feature {feat} missing from schema.feature_schema")
+        categorical_sizes[feat] = len(spec["onehot_names"])
+
+    # Construct model
+    logger.info("Constructing model...")
+    model = MultitaskMLP(
+        spectrum_len=SPECTRUM_LEN,
+        hidden_dims=HIDDEN_DIMS,
+        num_binary=maccs_length,
+        categorical_sizes=categorical_sizes,
+        dropout=DROPOUT,
+    )
+
+    # Split dataset
+    logger.info("Splitting dataset into train/val/test...")
+    train_ds, val_ds, test_ds = split_dataset(dataset, train_fraction=TRAIN_FRACTION, val_fraction=VAL_FRACTION)
+
+    logger.info(f"Train samples: {len(train_ds)}, Val samples: {len(val_ds)}, Test samples: {len(test_ds)}")
+    train(
+        model=model,
+        train_dataset=train_ds,
+        val_dataset=val_ds,
+        n_epochs=EPOCHS,
+        batch_size=BATCH_SIZE,
+        lr=LR,
+        output_path=OUTPUT_PATH,
+    )
+
 
 if __name__ == "__main__":
-    run_hardcoded_training()
+    #run_hardcoded_training()
+    main()

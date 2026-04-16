@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, random_split
 from typing import Optional
+from pathlib import Path
 
 from neural_net.model import MultitaskMLP, categorical_sizes_from_df
 from torch.utils.data import Dataset
@@ -156,6 +157,7 @@ def train(
     lr: float = 1e-3,
     device: Optional[torch.device] = None,
     pos_weight: Optional[torch.Tensor] = None,
+    output_path: Optional[Path] = None,
 ) -> MultitaskMLP:
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -172,11 +174,50 @@ def train(
     binary_loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight, reduction='mean')
     categorical_loss_fn = nn.CrossEntropyLoss()
 
-    for epoch in range(1, n_epochs + 1):
+    # Checkpoint/resume support
+    # If OUTPUT_PATH exists and contains epoch, resume from next epoch.
+    start_epoch = 1
+    checkpoint_path_latest = output_path.with_suffix('.latest.pt') if output_path else None
+    if checkpoint_path_latest and checkpoint_path_latest.exists():
+        logger.info(f"Found checkpoint {checkpoint_path_latest}, attempting to resume...")
+        ckpt = torch.load(checkpoint_path_latest, map_location=device)
+        model.load_state_dict(ckpt["model_state_dict"]) 
+        optimizer.load_state_dict(ckpt.get("optimizer_state_dict", {}))
+        start_epoch = int(ckpt.get("epoch", 0)) + 1
+        logger.info(f"Resuming from epoch {start_epoch}")
+
+    best_val_loss = float("inf")
+    if output_path:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    for epoch in range(start_epoch, n_epochs + 1):
         logger.info(f"Epoch {epoch}/{n_epochs}--------------------------------------")
 
         train_loss = train_one_epoch(model, train_loader, binary_loss_fn, categorical_loss_fn, optimizer, device, pos_weight)
         val_metrics = evaluate(model, val_loader, binary_loss_fn, categorical_loss_fn, device, pos_weight)
+
+        # Save latest checkpoint
+        latest_ckpt = {
+            "epoch": epoch,
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "categorical_sizes": model.categorical_sizes,
+            "maccs_length": model.num_binary
+        }
+        if checkpoint_path_latest:
+            torch.save(latest_ckpt, checkpoint_path_latest)
+
+        # Save best model seperately
+        if val_metrics["loss"] < best_val_loss and output_path:
+            best_val_loss = val_metrics["loss"]
+            best_ckpt = {
+                "epoch": epoch,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "categorical_sizes": model.categorical_sizes,
+                "maccs_length": model.num_binary
+            }
+            torch.save(best_ckpt, output_path.with_suffix('.best.pt'))
 
         logger.info(
             f"Epoch {epoch:3d} | "
@@ -186,6 +227,8 @@ def train(
             f"val_cat_acc={val_metrics['categorical_accuracy']:.4f}"
         )
         logger.info("-----------------------------------\n")
+
+    logger.info("Training complete.")
 
     return model
 
