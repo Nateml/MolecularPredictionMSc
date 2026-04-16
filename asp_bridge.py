@@ -35,6 +35,8 @@ def solve(asp_code: list[str], atom_counts: int, output_list_of_smiles: bool = F
         f'-c h={atom_counts['num_hydrogens']}',
         f'-c n={atom_counts['num_nitrogens']}',
         f'-c o={atom_counts['num_oxygens']}',
+        f'-c s={atom_counts['num_sulfurs']}',
+        f'-c p={atom_counts['num_phosphorus']}',
         ])
 
 
@@ -103,13 +105,22 @@ def main():
                '  python asp_bridge.py --carbons 5 --nitrogens 1 --pred-ids 154',
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument('-c', '--carbons', type=int, default=3, help='Number of carbons')
-    parser.add_argument('-y', '--hydrogens', type=int, default=6, help='Number of hydrogens')
-    parser.add_argument('-o', '--oxygens', type=int, default=1, help='Number of oxygens')
+    parser.add_argument('-c', '--carbons', type=int, default=0, help='Number of carbons')
+    parser.add_argument('-y', '--hydrogens', type=int, default=0, help='Number of hydrogens')
+    parser.add_argument('-o', '--oxygens', type=int, default=0, help='Number of oxygens')
     parser.add_argument('-n', '--nitrogens', type=int, default=0, help='Number of nitrogens')
-    parser.add_argument('--pred-ids', type=int, nargs='+', default=[154], help='Prediction IDs')
+    parser.add_argument('-s', '--sulfurs', type=int, default=0, help='Number of sulfurs')
+    parser.add_argument('-p', '--phosphorus', type=int, default=0, help='Number of phosphorus atoms')
+    parser.add_argument('--pred-ids', type=int, nargs='+', default=[], help='Prediction IDs')
     parser.add_argument('--pred-sets', type=int, nargs='+', action='append', help='Prediction sets for each ID (can specify multiple sets per ID)')
     args = parser.parse_args()
+
+    # If all atom counts are zero, use a default formula
+    if all(count == 0 for count in [args.carbons, args.hydrogens, args.oxygens, args.nitrogens, args.sulfurs, args.phosphorus]):
+        print("No atom counts specified, using default formula C3H6O1")
+        args.carbons = 3
+        args.hydrogens = 6
+        args.oxygens = 1
 
     predictions = {}
     
@@ -130,6 +141,8 @@ def main():
     predictions['num_hydrogens'] = args.hydrogens
     predictions['num_oxygens'] = args.oxygens
     predictions['num_nitrogens'] = args.nitrogens
+    predictions['num_sulfurs'] = args.sulfurs
+    predictions['num_phosphorus'] = args.phosphorus
 
     # Example predictions
     # predictions = {

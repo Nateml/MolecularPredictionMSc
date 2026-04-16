@@ -1770,7 +1770,7 @@ FEATURE_VECTOR_DEFINITIONS: Dict[int, ASPPredicate] = {
     },
 }
 
-COUNT_KEYS = ['num_carbons', 'num_hydrogens', 'num_nitrogens', 'num_oxygens']
+COUNT_KEYS = ['num_carbons', 'num_hydrogens', 'num_nitrogens', 'num_oxygens', 'num_sulfurs', 'num_phosphorus']
 
 def KEYS():
     maccs_keys = set(MACCS_DEFINITIONS.keys())

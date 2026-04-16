@@ -76,7 +76,7 @@ class PredictionInterface(RootModel[dict[KeyID, Union[PredictionEntry, int]]]):
     @model_validator(mode='after')
     @classmethod
     def validate_types(cls, data):
-        required_atom_keys = {'num_carbons', 'num_hydrogens', 'num_nitrogens', 'num_oxygens'}
+        required_atom_keys = {'num_carbons', 'num_hydrogens', 'num_nitrogens', 'num_oxygens', 'num_sulfurs', 'num_phosphorus'}
 
         # Validate type
         for key in set(data.root.keys()):
