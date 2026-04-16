@@ -3,7 +3,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, random_split
 from typing import Optional
 
-from neural_net.model import MultitaskMLP, categorical_sizes_from_df
+from neural_net.model import MultitaskMLP, categorical_sizes_from_df, MultiQuantileLoss
 from torch.utils.data import Dataset
 
 
@@ -30,8 +30,10 @@ def compute_loss(
     targets: dict[str, torch.Tensor],
     binary_loss_fn: nn.Module,
     categorical_loss_fn: nn.Module,
+    quantile_loss_fn: nn.Module,
     binary_weight: float = 1.0,
     categorical_weight: float = 1.0,
+    quantile_weight: float = 1.0,
     pos_weight: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
 
@@ -46,6 +48,14 @@ def compute_loss(
 
     loss = loss + categorical_weight * ce_loss
 
+    # Quantile loss (element counts)
+    quantile_loss = 0.0
+    for i, logits in enumerate(outputs["quantile"]):
+        quantile_loss += quantile_loss_fn(logits, targets["regression"][i])
+    quantile_loss /= len(outputs["quantile"])  # Average over heads
+
+    loss = loss + quantile_weight * quantile_loss
+
     return loss
 
 
@@ -56,6 +66,7 @@ def train_one_epoch(
     loader: DataLoader,
     binary_loss_fn: nn.Module,
     categorical_loss_fn: nn.Module,
+    quantile_loss_fn: nn.Module,
     optimizer: torch.optim.Optimizer,
     device: torch.device,
     pos_weight: Optional[torch.Tensor] = None,
@@ -69,11 +80,12 @@ def train_one_epoch(
         targets = {
             "binary":      targets["binary"].to(device),
             "categorical": [t.to(device) for t in targets["categorical"]],
+            "regression":      targets["regression"].to(device),
         }
 
         optimizer.zero_grad()
         outputs = model(spectra)
-        loss = compute_loss(outputs, targets, binary_loss_fn, categorical_loss_fn, pos_weight=pos_weight)
+        loss = compute_loss(outputs, targets, binary_loss_fn, categorical_loss_fn, quantile_loss_fn, pos_weight=pos_weight)
         loss.backward()
         optimizer.step()
 
@@ -88,6 +100,7 @@ def evaluate(
     loader: DataLoader,
     binary_loss_fn: nn.Module,
     categorical_loss_fn: nn.Module,
+    quantile_loss_fn: nn.Module,
     device: torch.device,
     pos_weight: Optional[torch.Tensor] = None,
 ) -> dict[str, float]:
@@ -96,16 +109,18 @@ def evaluate(
     total_loss = 0.0
     all_binary_probs,  all_binary_labels  = [], []
     all_cat_preds,     all_cat_labels     = [], []
+    all_quantile_preds, all_quantile_labels = [], []
 
     for spectra, targets in loader:
         spectra = spectra.to(device)
         targets = {
             "binary":      targets["binary"].to(device),
             "categorical": [t.to(device) for t in targets["categorical"]],
+            "regression":      targets["regression"].to(device),
         }
 
         outputs = model(spectra)
-        total_loss += compute_loss(outputs, targets, binary_loss_fn, categorical_loss_fn, pos_weight=pos_weight).item() * len(spectra)
+        total_loss += compute_loss(outputs, targets, binary_loss_fn, categorical_loss_fn, quantile_loss_fn, pos_weight=pos_weight).item() * len(spectra)
 
         # Binary
         all_binary_probs.append(torch.sigmoid(outputs["binary"]).cpu())
@@ -116,6 +131,12 @@ def evaluate(
         batch_cat_labels = [t.cpu() for t in targets["categorical"]]
         all_cat_preds.append(batch_cat_preds)
         all_cat_labels.append(batch_cat_labels)
+
+        # Quantile regression
+        batch_quantile_preds = [logits.cpu() for logits in outputs["quantile"]]
+        batch_quantile_labels = [t.cpu() for t in targets["regression"]]
+        all_quantile_preds.append(batch_quantile_preds)
+        all_quantile_labels.append(batch_quantile_labels)
 
     # Binary accuracy
     all_binary_probs  = torch.cat(all_binary_probs)
@@ -131,10 +152,18 @@ def evaluate(
         cat_acc += (preds == labels).float().mean().item()
     cat_acc /= n_heads
 
+    # Quantile regression metrics
+    quantile_losses = []
+    for preds, labels in zip(all_quantile_preds, all_quantile_labels):
+        quantile_loss = quantile_loss_fn(torch.stack(preds), torch.stack(labels))
+        quantile_losses.append(quantile_loss.item())
+    quantile_loss = sum(quantile_losses) / len(quantile_losses)
+
     return {
         "loss":                total_loss / len(loader.dataset),
         "binary_accuracy":     binary_acc,
         "categorical_accuracy": cat_acc,
+        "quantile_loss":       quantile_loss,
     }
 
 
@@ -149,6 +178,7 @@ def train(
     lr: float = 1e-3,
     device: Optional[torch.device] = None,
     pos_weight: Optional[torch.Tensor] = None,
+    quantiles: list[float] = [0.05, 0.5, 0.95],
 ) -> MultitaskMLP:
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -161,16 +191,18 @@ def train(
 
     binary_loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight, reduction='mean')
     categorical_loss_fn = nn.CrossEntropyLoss()
+    quantile_loss_fn = MultiQuantileLoss(quantiles=quantiles)  # 5th percentile, median, 95th percentile
 
     for epoch in range(1, n_epochs + 1):
-        train_loss = train_one_epoch(model, train_loader, binary_loss_fn, categorical_loss_fn, optimizer, device, pos_weight)
-        val_metrics = evaluate(model, val_loader, binary_loss_fn, categorical_loss_fn, device, pos_weight)
+        train_loss = train_one_epoch(model, train_loader, binary_loss_fn, categorical_loss_fn, quantile_loss_fn, optimizer, device, pos_weight)
+        val_metrics = evaluate(model, val_loader, binary_loss_fn, categorical_loss_fn, quantile_loss_fn, device, pos_weight)
         print(
             f"Epoch {epoch:3d} | "
             f"train_loss={train_loss:.4f} | "
             f"val_loss={val_metrics['loss']:.4f} | "
             f"val_binary_acc={val_metrics['binary_accuracy']:.4f} | "
-            f"val_cat_acc={val_metrics['categorical_accuracy']:.4f}"
+            f"val_cat_acc={val_metrics['categorical_accuracy']:.4f} | "
+            f"val_quantile_loss={val_metrics['quantile_loss']:.4f}"
         )
 
     return model

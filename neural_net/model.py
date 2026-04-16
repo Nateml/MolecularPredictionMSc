@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 import torch.nn as nn
 import pandas as pd
 
@@ -35,6 +36,31 @@ def _mlp_block(in_dim: int, out_dim: int, dropout: float) -> nn.Sequential:
         nn.Dropout(dropout),
     )
 
+class QuantileHead(nn.Module):
+    def __init__(self, in_dim: int, hidden_dim: int, num_quantiles: int):
+        super().__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(in_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, num_quantiles)
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # The first quantile is predicted directly, and the others are predicted as positive offsets from it, to ensure monotonicity.
+
+        raw = self.mlp(x)  # (batch, num_quantiles)
+
+        base = raw[:, :1]  # first quantile
+        deltas = F.softplus(raw[:, 1:])  # strictly positive
+
+        quantiles = torch.cat(
+            [base, base + torch.cumsum(deltas, dim=1)],
+            dim=1
+        )
+
+        return quantiles
+        
+
 
 class MultitaskMLP(nn.Module):
     def __init__(
@@ -43,7 +69,10 @@ class MultitaskMLP(nn.Module):
         hidden_dims: list[int] = [512, 256, 128],
         num_binary: int = 166,
         categorical_sizes: dict[str, int] | None = None,
+        num_regression: int = 4,
+        num_quantiles: int = 3,
         dropout: float = 0.3,
+        regression_hidden_dim: int = 64
     ):
         super().__init__()
 
@@ -63,15 +92,45 @@ class MultitaskMLP(nn.Module):
         # Binary head (MACCS keys)
         self.binary_head = nn.Linear(prev, num_binary)
 
-        # Categorical heads (one per atom count feature)
+        # Categorical heads (one per categorical feature)
         self.categorical_heads = nn.ModuleList([
             nn.Linear(prev, num_classes)
             for num_classes in categorical_sizes.values()
         ])
+
+        # Quantile regression head (one per element count)
+        # Element counts are unique because they're the only features that we cannot easily constrain to an interval in ASP,
+        # since the molecular formula is an input to the program.
+        self.quantile_heads = nn.ModuleList([
+            QuantileHead(prev, regression_hidden_dim, num_quantiles)
+            for _ in range(num_regression)
+        ])
+
 
     def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
         h = self.backbone(x)
         return {
             "binary":      self.binary_head(h),
             "categorical": [head(h) for head in self.categorical_heads],
+            "quantile": [head(h) for head in self.quantile_heads],
         }
+
+class MultiQuantileLoss(nn.Module):
+    def __init__(self, quantiles: list[float]):
+        super().__init__()
+        self.register_buffer('quantiles', torch.tensor(quantiles).view(1, -1))
+        # shape: (1, num_quantiles)
+
+    def forward(self, preds: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        # preds: (batch, num_quantiles)
+        # target: (batch,)
+        target = target.unsqueeze(1)  # shape: (batch, 1)
+
+        error = target - preds # shape: (batch, num_quantiles)
+
+        loss = torch.maximum(
+            self.quantiles * error,
+            (self.quantiles - 1) * error
+        )
+
+        return loss.mean()  # shape: scalar
