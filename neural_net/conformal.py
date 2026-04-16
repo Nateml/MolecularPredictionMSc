@@ -1,11 +1,15 @@
+from pathlib import Path
+
 from neural_net.model import MultitaskMLP
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from torch import nn
+from neural_net.onehot_decoded_dataset import OneHotDecodedDataset
 
 import torch
 import torch.nn.functional as F
+import argparse
 
-from neural_net.train import compute_loss
+from neural_net.train import compute_loss, split_dataset
 
 def binary_score_fn(logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
     """
@@ -324,3 +328,49 @@ def predict_sets(
         results["regression"] = (lower, upper)
 
     return results
+
+def main(args: list[str]):
+    # Hardcoded values for now
+    DATA_PATH = Path("Data Processing/MoNa/MoNA-filtered-curated-with-maccs-and-structure-onehot.json")
+    SCHEMA_PATH = Path("Data Processing/MoNa/feature_vector_onehot_schema.json")
+    OUTPUT_PATH = Path("models/multitask_mlp_hardcoded.pt")
+    SPECTRUM_LEN = 1000
+    DROPOUT = 0.3
+    alpha = 0.05
+
+    # Load model
+    ckpt = torch.load(args.model_checkpoint, map_location="cpu")
+    model = MultitaskMLP(
+        spectrum_len=ckpt["spectrum_len"],
+        hidden_dims=ckpt["hidden_dims"],
+        num_binary=ckpt["num_binary"],
+        categorical_sizes=ckpt["categorical_sizes"],
+        dropout=DROPOUT,
+    )
+    model.load_state_dict(ckpt["model_state_dict"])
+    model.eval()
+
+    # Load calibration data
+    dataset = OneHotDecodedDataset(
+        data_path=args.calibration_data,
+        schema_path=SCHEMA_PATH,
+        spectrum_len=SPECTRUM_LEN,
+    )
+
+    _, _, test_ds = split_dataset(dataset, train_fraction=0.7, val_fraction=0.15)
+
+    # Split test_ds into calibration and test sets
+    calib_size = int(0.2 * len(test_ds))
+    calib_ds = Subset(test_ds, list(range(calib_size)))
+    test_ds = Subset(test_ds, list(range(calib_size, len(test_ds))))
+
+    calibration_loader = DataLoader(calib_ds, batch_size=64, shuffle=False)
+
+    # Calibrate model
+    thresholds = calibrate_model(model, calibration_loader, alpha)
+
+    # Save thresholds
+    torch.save(thresholds, args.output_thresholds)
+
+if __name__ == "__main__":
+    main()
