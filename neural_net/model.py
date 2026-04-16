@@ -51,6 +51,8 @@ class MultitaskMLP(nn.Module):
             raise ValueError("categorical_sizes is required. Use categorical_sizes_from_df() to derive it from your feature DataFrame.")
 
         self.categorical_names = list(categorical_sizes.keys())
+        self.num_binary = num_binary
+        self.categorical_sizes = categorical_sizes
 
         # Shared backbone
         layers = []

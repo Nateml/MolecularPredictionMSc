@@ -1,6 +1,6 @@
 from typing import Tuple
 
-from predicates.definitions import MACCS_DEFINITIONS
+from predicates.definitions import MACCS_DEFINITIONS, FEATURE_VECTOR_DEFINITIONS
 from predicates.interface import PredictionInterface, PredictionEntry
 from predicates.definitions import HELPER_PREDICATES
 
@@ -32,7 +32,7 @@ def compile_asp_constraint(interface: PredictionInterface, HELPERS = HELPER_PRED
 
         pred_set = entry.pred_set
 
-        definition = MACCS_DEFINITIONS.get(k)
+        definition = MACCS_DEFINITIONS.get(k) or FEATURE_VECTOR_DEFINITIONS.get(k)
         if not definition:
             raise ValueError(f"No predicate definition found for key {k}. Ensure that the key is defined in definitions.py.")
 
