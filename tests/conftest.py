@@ -118,6 +118,7 @@ def formulas():
         "C2H4O",    # allows C-O single + carbonyl
         "C2H3N",    # allows C=N and C≡N
         "CH3NO",    # allows N-O and C-N and C-O combinations
+        "H2SO2",    # allows S=O and S-O combinations
     ]
 
 
