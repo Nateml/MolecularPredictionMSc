@@ -209,7 +209,8 @@ __marimo__/
 
 #jsons of data should not be tracked
 *.json
-
+#except for Data Processing\\MoNa\\feature_vector_oneshot_schema.json which is used for schema validation
+!Data Processing\\MoNa\\feature_vector_oneshot_schema.json
 
 #ignore model checkpoints
 *.pt
