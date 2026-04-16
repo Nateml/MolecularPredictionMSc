@@ -1,4 +1,4 @@
-from typing import Dict, TypedDict
+from typing import Dict, TypedDict, Set
 
 class ASPPredicate(TypedDict):
     """
@@ -6,7 +6,7 @@ class ASPPredicate(TypedDict):
     """
     predicate: str  # The predicate name in the ASP program, e.g. has_carbonyl
     definition: str  # The actual predicate definition, e.g. "has_carbonyl :- ..."
-    domain: set  # The set of possible values
+    domain: Set[int]  # The set of possible values
 
 # Definitions for helper predicates that are used by predicates defined in MACCS_DEFINITIONS and other predicates we may want to define. These are compiled into the ASP program by compiler.compile_asp_constraint.
 HELPER_PREDICATES: Dict[str, str] = {
@@ -580,7 +580,176 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
                 symbol(J, "O").
         """,
         "domain": {0, 1}
-    }
+    },
+    52: {
+        "predicate": "has_n_n_bond",
+        "definition": """
+            has_n_n_bond :-
+                any_bond_between(I, J),
+                symbol(I, "N"),
+                symbol(J, "N"),
+                I < J.
+        """,
+        "domain": {0, 1}
+    },
+    ##############################
+    ##### ELEMENT PRESENCE   #####
+    ##############################
+    161: {
+        "predicate": "has_nitrogen",
+        "definition": """
+            has_nitrogen :- symbol(_, "N").
+        """,
+        "domain": {0, 1}
+    },
+    164: {
+        "predicate": "has_oxygen",
+        "definition": """
+            has_oxygen :- symbol(_, "O").
+        """,
+        "domain": {0, 1}
+    },
+    ##############################
+    ##### ELEMENT COUNT      #####
+    ##############################
+    159: {
+        "predicate": "has_oxygen_gt1",
+        "definition": """
+            has_oxygen_gt1 :- #count{ I : symbol(I, "O") } >= 2.
+        """,
+        "domain": {0, 1}
+    },
+    142: {
+        "predicate": "has_nitrogen_gt1",
+        "definition": """
+            has_nitrogen_gt1 :- #count{ I : symbol(I, "N") } >= 2.
+        """,
+        "domain": {0, 1}
+    },
+    ##############################
+    ##### RING PRESENCE      #####
+    ##############################
+    165: {
+        "predicate": "has_ring",
+        "definition": """
+            has_ring :- cycle_start(_, _).
+        """,
+        "domain": {0, 1}
+    },
+    ##############################
+    ##### 3-ATOM CHAINS      #####
+    ##############################
+    110: {
+        "predicate": "has_n_c_o",
+        "definition": """
+            has_n_c_o :-
+                any_bond_between(I, J),
+                any_bond_between(J, K),
+                symbol(I, "N"),
+                symbol(J, "C"),
+                symbol(K, "O"),
+                I != J, J != K, I != K.
+        """,
+        "domain": {0, 1}
+    },
+    123: {
+        "predicate": "has_o_c_o",
+        "definition": """
+            has_o_c_o :-
+                any_bond_between(I, J),
+                any_bond_between(J, K),
+                symbol(I, "O"),
+                symbol(J, "C"),
+                symbol(K, "O"),
+                I != J, J != K, I < K.
+        """,
+        "domain": {0, 1}
+    },
+    77: {
+        "predicate": "has_n_a_n",
+        "definition": """
+            has_n_a_n :-
+                any_bond_between(I, J),
+                any_bond_between(J, K),
+                symbol(I, "N"),
+                symbol(K, "N"),
+                I != J, J != K, I < K.
+        """,
+        "domain": {0, 1}
+    },
+    ##############################
+    ##### 4-ATOM CHAINS      #####
+    ##############################
+    72: {
+        "predicate": "has_o_aa_o",
+        "definition": """
+            has_o_aa_o :-
+                any_bond_between(I, J),
+                any_bond_between(J, K),
+                any_bond_between(K, L),
+                symbol(I, "O"),
+                symbol(L, "O"),
+                I != J, J != K, K != L, I != K, J != L, I < L.
+        """,
+        "domain": {0, 1}
+    },
+    79: {
+        "predicate": "has_n_aa_n",
+        "definition": """
+            has_n_aa_n :-
+                any_bond_between(I, J),
+                any_bond_between(J, K),
+                any_bond_between(K, L),
+                symbol(I, "N"),
+                symbol(L, "N"),
+                I != J, J != K, K != L, I != K, J != L, I < L.
+        """,
+        "domain": {0, 1}
+    },
+    95: {
+        "predicate": "has_n_aa_o",
+        "definition": """
+            has_n_aa_o :-
+                any_bond_between(I, J),
+                any_bond_between(J, K),
+                any_bond_between(K, L),
+                symbol(I, "N"),
+                symbol(L, "O"),
+                I != J, J != K, K != L, I != K, J != L, I != L.
+        """,
+        "domain": {0, 1}
+    },
+    ##############################
+    #####       HYDROGEN      ####
+    ##############################
+    84: {
+        "predicate": "has_nh2",
+        "definition": """
+            has_nh2 :- symbol(I, "N"), free_bonds(I, 2).
+        """,
+        "domain": {0, 1}
+    },
+    151: {
+        "predicate": "has_nh",
+        "definition": """
+            has_nh :- symbol(I, "N"), free_bonds(I, H), H >= 1.
+        """,
+        "domain": {0, 1}
+    },
+    139: {
+        "predicate": "has_oh",
+        "definition": """
+            has_oh :- symbol(I, "O"), free_bonds(I, H), H >= 1.
+        """,
+        "domain": {0, 1}
+    },
+    160: {
+        "predicate": "has_ch3",
+        "definition": """
+            has_ch3 :- symbol(I, "C"), free_bonds(I, H), H >= 3.
+        """,
+        "domain": {0, 1}
+    },
 }
 
 # Feature-vector translations grounded in predicates emitted by
