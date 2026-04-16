@@ -95,7 +95,7 @@ def run_pipeline(canonicalize):
 @pytest.fixture
 def parse_formula():
     def _fn(formula: str):
-        counts = {"C": 0, "H": 0, "O": 0, "N": 0}
+        counts = {"C": 0, "H": 0, "O": 0, "N": 0, "S": 0, "P": 0}
 
         matches = re.findall(r"([A-Z])(\d*)", formula)
 
@@ -118,6 +118,7 @@ def formulas():
         "C2H4O",    # allows C-O single + carbonyl
         "C2H3N",    # allows C=N and C≡N
         "CH3NO",    # allows N-O and C-N and C-O combinations
+        "H2SO2",    # allows S=O and S-O combinations
     ]
 
 
@@ -135,6 +136,8 @@ def build_predictions(parse_formula):
             "num_hydrogens": counts["H"],
             "num_oxygens": counts["O"],
             "num_nitrogens": counts["N"],
+            "num_sulfurs": counts["S"],
+            "num_phosphorus": counts["P"],
         }
 
         if constraint is not None:

@@ -1,0 +1,2205 @@
+{
+  "source_field": "structural_features",
+  "maccs_field": "maccs",
+  "maccs_length": 167,
+  "onehot_length": 262,
+  "feature_vector_onehot_length": 429,
+  "packed_bit_order": "msb_first",
+  "compact_combined_field_b64": "combined_packed_b64",
+  "compact_combined_field_nbits": "combined_nbits",
+  "onehot_names": [
+    "alcohol_bin_0:<= 0",
+    "alcohol_bin_1:> 0 and <= 1",
+    "alcohol_bin_2:> 1 and <= 4",
+    "alcohol_bin_3:> 4",
+    "aldehyde_bin_0:<= 0",
+    "aldehyde_bin_1:> 0",
+    "aliphatic_ring_count_bin_0:<= 0",
+    "aliphatic_ring_count_bin_1:> 0 and <= 1",
+    "aliphatic_ring_count_bin_2:> 1",
+    "amide_bin_0:<= 0",
+    "amide_bin_1:> 0",
+    "amine_bin_0:<= 0",
+    "amine_bin_1:> 0",
+    "aniline_bin_0:<= 0",
+    "aniline_bin_1:> 0",
+    "aromatic_atom_count_bin_0:<= 0",
+    "aromatic_atom_count_bin_1:> 0",
+    "aromatic_heteroatom_count_bin_0:<= 0",
+    "aromatic_heteroatom_count_bin_1:> 0",
+    "aromatic_n_count_bin_0:<= 0",
+    "aromatic_n_count_bin_1:> 0",
+    "aromatic_o_count_bin_0:<= 0",
+    "aromatic_o_count_bin_1:> 0",
+    "aromatic_p_count_bin_0:<= 0",
+    "aromatic_p_count_bin_1:> 0",
+    "aromatic_ring_bin_0:<= 0",
+    "aromatic_ring_bin_1:> 0",
+    "aromatic_ring_count_bin_0:<= 0",
+    "aromatic_ring_count_bin_1:> 0",
+    "aromatic_s_count_bin_0:<= 0",
+    "aromatic_s_count_bin_1:> 0",
+    "assigned_chiral_center_count_bin_0:<= 0",
+    "assigned_chiral_center_count_bin_1:> 0",
+    "branch_point_count_bin_0:<= 4",
+    "branch_point_count_bin_1:> 4 and <= 5",
+    "branch_point_count_bin_2:> 5 and <= 6",
+    "branch_point_count_bin_3:> 6 and <= 8",
+    "branch_point_count_bin_4:> 8",
+    "bridgehead_atom_count_bin_0:<= 0",
+    "bridgehead_atom_count_bin_1:> 0",
+    "carboxylic_acid_bin_0:<= 0",
+    "carboxylic_acid_bin_1:> 0",
+    "chiral_center_count_bin_0:<= 2",
+    "chiral_center_count_bin_1:> 2 and <= 3",
+    "chiral_center_count_bin_2:> 3 and <= 6",
+    "chiral_center_count_bin_3:> 6",
+    "connected_component_count_bin_0:<= 1",
+    "connected_component_count_bin_1:> 1",
+    "degree_1_atom_count_bin_0:<= 7",
+    "degree_1_atom_count_bin_1:> 7 and <= 8",
+    "degree_1_atom_count_bin_2:> 8 and <= 9",
+    "degree_1_atom_count_bin_3:> 9",
+    "degree_2_atom_count_bin_0:<= 31",
+    "degree_2_atom_count_bin_1:> 31 and <= 39",
+    "degree_2_atom_count_bin_2:> 39 and <= 45",
+    "degree_2_atom_count_bin_3:> 45 and <= 55",
+    "degree_2_atom_count_bin_4:> 55 and <= 63",
+    "degree_2_atom_count_bin_5:> 63",
+    "degree_3_atom_count_bin_0:<= 3",
+    "degree_3_atom_count_bin_1:> 3 and <= 5",
+    "degree_3_atom_count_bin_2:> 5 and <= 8",
+    "degree_3_atom_count_bin_3:> 8",
+    "degree_4plus_atom_count_bin_0:<= 0",
+    "degree_4plus_atom_count_bin_1:> 0 and <= 1",
+    "degree_4plus_atom_count_bin_2:> 1 and <= 2",
+    "degree_4plus_atom_count_bin_3:> 2",
+    "degree_of_unsaturation_bin_0:<= 4",
+    "degree_of_unsaturation_bin_1:> 4 and <= 5",
+    "degree_of_unsaturation_bin_2:> 5 and <= 7",
+    "degree_of_unsaturation_bin_3:> 7 and <= 9",
+    "degree_of_unsaturation_bin_4:> 9 and <= 13",
+    "degree_of_unsaturation_bin_5:> 13",
+    "double_bond_count_bin_0:<= 3",
+    "double_bond_count_bin_1:> 3 and <= 5",
+    "double_bond_count_bin_2:> 5 and <= 7",
+    "double_bond_count_bin_3:> 7 and <= 9",
+    "double_bond_count_bin_4:> 9 and <= 13",
+    "double_bond_count_bin_5:> 13",
+    "element_B_bin_0:<= 0",
+    "element_B_bin_1:> 0",
+    "element_Br_bin_0:<= 0",
+    "element_Br_bin_1:> 0",
+    "element_C_bin_0:<= 35",
+    "element_C_bin_1:> 35 and <= 42",
+    "element_C_bin_2:> 42 and <= 49",
+    "element_C_bin_3:> 49 and <= 60",
+    "element_C_bin_4:> 60 and <= 66",
+    "element_C_bin_5:> 66",
+    "element_Cl_bin_0:<= 0",
+    "element_Cl_bin_1:> 0",
+    "element_F_bin_0:<= 0",
+    "element_F_bin_1:> 0",
+    "element_H_bin_0:<= 64",
+    "element_H_bin_1:> 64 and <= 77",
+    "element_H_bin_2:> 77 and <= 88",
+    "element_H_bin_3:> 88 and <= 102",
+    "element_H_bin_4:> 102 and <= 113",
+    "element_H_bin_5:> 113",
+    "element_I_bin_0:<= 0",
+    "element_I_bin_1:> 0",
+    "element_N_bin_0:<= 0",
+    "element_N_bin_1:> 0 and <= 1",
+    "element_N_bin_2:> 1",
+    "element_O_bin_0:<= 8",
+    "element_O_bin_1:> 8 and <= 10",
+    "element_O_bin_2:> 10 and <= 11",
+    "element_O_bin_3:> 11",
+    "element_P_bin_0:<= 0",
+    "element_P_bin_1:> 0 and <= 1",
+    "element_P_bin_2:> 1",
+    "element_S_bin_0:<= 0",
+    "element_S_bin_1:> 0",
+    "element_Si_bin_0:<= 0",
+    "element_Si_bin_1:> 0",
+    "ester_bin_0:<= 2",
+    "ester_bin_1:> 2 and <= 3",
+    "ester_bin_2:> 3",
+    "ether_bin_0:<= 2",
+    "ether_bin_1:> 2 and <= 3",
+    "ether_bin_2:> 3 and <= 4",
+    "ether_bin_3:> 4",
+    "exact_mass_da_bin_0:<= 651.58",
+    "exact_mass_da_bin_1:> 651.58 and <= 751.515",
+    "exact_mass_da_bin_2:> 751.515 and <= 834.614",
+    "exact_mass_da_bin_3:> 834.614 and <= 1006.72",
+    "exact_mass_da_bin_4:> 1006.72 and <= 1112.8",
+    "exact_mass_da_bin_5:> 1112.8",
+    "formal_charge_bin_0:<= 0",
+    "formal_charge_bin_1:> 0",
+    "fused_ring_pair_count_bin_0:<= 0",
+    "fused_ring_pair_count_bin_1:> 0",
+    "fused_ring_system_count_bin_0:<= 0",
+    "fused_ring_system_count_bin_1:> 0",
+    "halogenated_bin_0:<= 0",
+    "halogenated_bin_1:> 0",
+    "heavy_atom_count_bin_0:<= 45",
+    "heavy_atom_count_bin_1:> 45 and <= 52",
+    "heavy_atom_count_bin_2:> 52 and <= 58",
+    "heavy_atom_count_bin_3:> 58 and <= 70",
+    "heavy_atom_count_bin_4:> 70 and <= 78",
+    "heavy_atom_count_bin_5:> 78",
+    "heteroatom_count_bin_0:<= 9",
+    "heteroatom_count_bin_1:> 9 and <= 10",
+    "heteroatom_count_bin_2:> 10 and <= 12",
+    "heteroatom_count_bin_3:> 12",
+    "heteroatom_exocyclic_count_bin_0:<= 9",
+    "heteroatom_exocyclic_count_bin_1:> 9 and <= 10",
+    "heteroatom_exocyclic_count_bin_2:> 10 and <= 12",
+    "heteroatom_exocyclic_count_bin_3:> 12",
+    "heteroatom_in_ring_count_bin_0:<= 0",
+    "heteroatom_in_ring_count_bin_1:> 0 and <= 1",
+    "heteroatom_in_ring_count_bin_2:> 1",
+    "imide_bin_0:<= 0",
+    "imide_bin_1:> 0",
+    "ketone_bin_0:<= 0",
+    "ketone_bin_1:> 0",
+    "lactam_bin_0:<= 0",
+    "lactam_bin_1:> 0",
+    "lactone_bin_0:<= 0",
+    "lactone_bin_1:> 0",
+    "molecular_weight_da_bin_0:<= 652.058",
+    "molecular_weight_da_bin_1:> 652.058 and <= 752.027",
+    "molecular_weight_da_bin_2:> 752.027 and <= 835.201",
+    "molecular_weight_da_bin_3:> 835.201 and <= 1007.42",
+    "molecular_weight_da_bin_4:> 1007.42 and <= 1113.59",
+    "molecular_weight_da_bin_5:> 1113.59",
+    "n_valence_1_count_bin_0:<= 0",
+    "n_valence_1_count_bin_1:> 0",
+    "n_valence_2_count_bin_0:<= 0",
+    "n_valence_2_count_bin_1:> 0",
+    "n_valence_3_count_bin_0:<= 0",
+    "n_valence_3_count_bin_1:> 0",
+    "n_valence_4plus_count_bin_0:<= 0",
+    "n_valence_4plus_count_bin_1:> 0 and <= 1",
+    "n_valence_4plus_count_bin_2:> 1",
+    "nitrile_bin_0:<= 0",
+    "nitrile_bin_1:> 0",
+    "nitro_bin_0:<= 0",
+    "nitro_bin_1:> 0",
+    "o_valence_1_count_bin_0:<= 0",
+    "o_valence_1_count_bin_1:> 0 and <= 1",
+    "o_valence_1_count_bin_2:> 1",
+    "o_valence_2_count_bin_0:<= 7",
+    "o_valence_2_count_bin_1:> 7 and <= 8",
+    "o_valence_2_count_bin_2:> 8 and <= 10",
+    "o_valence_2_count_bin_3:> 10 and <= 11",
+    "o_valence_2_count_bin_4:> 11",
+    "o_valence_3plus_count_bin_0:<= 0",
+    "o_valence_3plus_count_bin_1:> 0",
+    "p_valence_3_count_bin_0:<= 0",
+    "p_valence_3_count_bin_1:> 0",
+    "p_valence_5plus_count_bin_0:<= 0",
+    "p_valence_5plus_count_bin_1:> 0 and <= 1",
+    "p_valence_5plus_count_bin_2:> 1",
+    "phenol_bin_0:<= 0",
+    "phenol_bin_1:> 0",
+    "phosphate_bin_0:<= 0",
+    "phosphate_bin_1:> 0 and <= 1",
+    "phosphate_bin_2:> 1",
+    "phosphonate_bin_0:<= 0",
+    "phosphonate_bin_1:> 0",
+    "ring_count_bin_0:<= 0",
+    "ring_count_bin_1:> 0 and <= 1",
+    "ring_count_bin_2:> 1",
+    "ring_size_3_count_bin_0:<= 0",
+    "ring_size_3_count_bin_1:> 0",
+    "ring_size_4_count_bin_0:<= 0",
+    "ring_size_4_count_bin_1:> 0",
+    "ring_size_5_count_bin_0:<= 0",
+    "ring_size_5_count_bin_1:> 0",
+    "ring_size_6_count_bin_0:<= 0",
+    "ring_size_6_count_bin_1:> 0 and <= 1",
+    "ring_size_6_count_bin_2:> 1",
+    "ring_size_7plus_count_bin_0:<= 0",
+    "ring_size_7plus_count_bin_1:> 0",
+    "ring_system_count_bin_0:<= 0",
+    "ring_system_count_bin_1:> 0 and <= 1",
+    "ring_system_count_bin_2:> 1",
+    "rotatable_bond_count_bin_0:<= 30",
+    "rotatable_bond_count_bin_1:> 30 and <= 37",
+    "rotatable_bond_count_bin_2:> 37 and <= 42",
+    "rotatable_bond_count_bin_3:> 42 and <= 50",
+    "rotatable_bond_count_bin_4:> 50 and <= 57",
+    "rotatable_bond_count_bin_5:> 57",
+    "s_valence_2_count_bin_0:<= 0",
+    "s_valence_2_count_bin_1:> 0",
+    "s_valence_4_count_bin_0:<= 0",
+    "s_valence_4_count_bin_1:> 0",
+    "s_valence_6plus_count_bin_0:<= 0",
+    "s_valence_6plus_count_bin_1:> 0",
+    "spiro_atom_count_bin_0:<= 0",
+    "spiro_atom_count_bin_1:> 0",
+    "stereo_double_bond_E_count_bin_0:<= 0",
+    "stereo_double_bond_E_count_bin_1:> 0",
+    "stereo_double_bond_Z_count_bin_0:<= 0",
+    "stereo_double_bond_Z_count_bin_1:> 0 and <= 2",
+    "stereo_double_bond_Z_count_bin_2:> 2 and <= 4",
+    "stereo_double_bond_Z_count_bin_3:> 4 and <= 6",
+    "stereo_double_bond_Z_count_bin_4:> 6 and <= 9",
+    "stereo_double_bond_Z_count_bin_5:> 9",
+    "stereo_double_bond_unspecified_count_bin_0:<= 2",
+    "stereo_double_bond_unspecified_count_bin_1:> 2 and <= 3",
+    "stereo_double_bond_unspecified_count_bin_2:> 3 and <= 4",
+    "stereo_double_bond_unspecified_count_bin_3:> 4",
+    "sulfate_bin_0:<= 0",
+    "sulfate_bin_1:> 0",
+    "sulfonamide_bin_0:<= 0",
+    "sulfonamide_bin_1:> 0",
+    "sulfoxide_bin_0:<= 0",
+    "sulfoxide_bin_1:> 0",
+    "total_atom_count_with_h_bin_0:<= 110",
+    "total_atom_count_with_h_bin_1:> 110 and <= 129",
+    "total_atom_count_with_h_bin_2:> 129 and <= 147",
+    "total_atom_count_with_h_bin_3:> 147 and <= 173",
+    "total_atom_count_with_h_bin_4:> 173 and <= 191",
+    "total_atom_count_with_h_bin_5:> 191",
+    "triple_bond_count_bin_0:<= 0",
+    "triple_bond_count_bin_1:> 0",
+    "unassigned_chiral_center_count_bin_0:<= 2",
+    "unassigned_chiral_center_count_bin_1:> 2 and <= 3",
+    "unassigned_chiral_center_count_bin_2:> 3 and <= 6",
+    "unassigned_chiral_center_count_bin_3:> 6"
+  ],
+  "feature_schema": {
+    "alcohol": {
+      "encoding": "binned",
+      "edges": [
+        0.0,
+        1.0,
+        4.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0 and <= 1",
+        "> 1 and <= 4",
+        "> 4"
+      ],
+      "onehot_names": [
+        "alcohol_bin_0:<= 0",
+        "alcohol_bin_1:> 0 and <= 1",
+        "alcohol_bin_2:> 1 and <= 4",
+        "alcohol_bin_3:> 4"
+      ]
+    },
+    "aldehyde": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "aldehyde_bin_0:<= 0",
+        "aldehyde_bin_1:> 0"
+      ]
+    },
+    "aliphatic_ring_count": {
+      "encoding": "binned",
+      "edges": [
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0 and <= 1",
+        "> 1"
+      ],
+      "onehot_names": [
+        "aliphatic_ring_count_bin_0:<= 0",
+        "aliphatic_ring_count_bin_1:> 0 and <= 1",
+        "aliphatic_ring_count_bin_2:> 1"
+      ]
+    },
+    "amide": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "amide_bin_0:<= 0",
+        "amide_bin_1:> 0"
+      ]
+    },
+    "amine": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "amine_bin_0:<= 0",
+        "amine_bin_1:> 0"
+      ]
+    },
+    "aniline": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "aniline_bin_0:<= 0",
+        "aniline_bin_1:> 0"
+      ]
+    },
+    "aromatic_atom_count": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "aromatic_atom_count_bin_0:<= 0",
+        "aromatic_atom_count_bin_1:> 0"
+      ]
+    },
+    "aromatic_heteroatom_count": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "aromatic_heteroatom_count_bin_0:<= 0",
+        "aromatic_heteroatom_count_bin_1:> 0"
+      ]
+    },
+    "aromatic_n_count": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "aromatic_n_count_bin_0:<= 0",
+        "aromatic_n_count_bin_1:> 0"
+      ]
+    },
+    "aromatic_o_count": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "aromatic_o_count_bin_0:<= 0",
+        "aromatic_o_count_bin_1:> 0"
+      ]
+    },
+    "aromatic_p_count": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "aromatic_p_count_bin_0:<= 0",
+        "aromatic_p_count_bin_1:> 0"
+      ]
+    },
+    "aromatic_ring": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "aromatic_ring_bin_0:<= 0",
+        "aromatic_ring_bin_1:> 0"
+      ]
+    },
+    "aromatic_ring_count": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "aromatic_ring_count_bin_0:<= 0",
+        "aromatic_ring_count_bin_1:> 0"
+      ]
+    },
+    "aromatic_s_count": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "aromatic_s_count_bin_0:<= 0",
+        "aromatic_s_count_bin_1:> 0"
+      ]
+    },
+    "assigned_chiral_center_count": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "assigned_chiral_center_count_bin_0:<= 0",
+        "assigned_chiral_center_count_bin_1:> 0"
+      ]
+    },
+    "branch_point_count": {
+      "encoding": "binned",
+      "edges": [
+        4.0,
+        5.0,
+        6.0,
+        8.0
+      ],
+      "labels": [
+        "<= 4",
+        "> 4 and <= 5",
+        "> 5 and <= 6",
+        "> 6 and <= 8",
+        "> 8"
+      ],
+      "onehot_names": [
+        "branch_point_count_bin_0:<= 4",
+        "branch_point_count_bin_1:> 4 and <= 5",
+        "branch_point_count_bin_2:> 5 and <= 6",
+        "branch_point_count_bin_3:> 6 and <= 8",
+        "branch_point_count_bin_4:> 8"
+      ]
+    },
+    "bridgehead_atom_count": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "bridgehead_atom_count_bin_0:<= 0",
+        "bridgehead_atom_count_bin_1:> 0"
+      ]
+    },
+    "carboxylic_acid": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "carboxylic_acid_bin_0:<= 0",
+        "carboxylic_acid_bin_1:> 0"
+      ]
+    },
+    "chiral_center_count": {
+      "encoding": "binned",
+      "edges": [
+        2.0,
+        3.0,
+        6.0
+      ],
+      "labels": [
+        "<= 2",
+        "> 2 and <= 3",
+        "> 3 and <= 6",
+        "> 6"
+      ],
+      "onehot_names": [
+        "chiral_center_count_bin_0:<= 2",
+        "chiral_center_count_bin_1:> 2 and <= 3",
+        "chiral_center_count_bin_2:> 3 and <= 6",
+        "chiral_center_count_bin_3:> 6"
+      ]
+    },
+    "connected_component_count": {
+      "encoding": "binned",
+      "edges": [
+        1.0
+      ],
+      "labels": [
+        "<= 1",
+        "> 1"
+      ],
+      "onehot_names": [
+        "connected_component_count_bin_0:<= 1",
+        "connected_component_count_bin_1:> 1"
+      ]
+    },
+    "degree_1_atom_count": {
+      "encoding": "binned",
+      "edges": [
+        7.0,
+        8.0,
+        9.0
+      ],
+      "labels": [
+        "<= 7",
+        "> 7 and <= 8",
+        "> 8 and <= 9",
+        "> 9"
+      ],
+      "onehot_names": [
+        "degree_1_atom_count_bin_0:<= 7",
+        "degree_1_atom_count_bin_1:> 7 and <= 8",
+        "degree_1_atom_count_bin_2:> 8 and <= 9",
+        "degree_1_atom_count_bin_3:> 9"
+      ]
+    },
+    "degree_2_atom_count": {
+      "encoding": "binned",
+      "edges": [
+        31.0,
+        39.0,
+        45.0,
+        55.0,
+        63.0
+      ],
+      "labels": [
+        "<= 31",
+        "> 31 and <= 39",
+        "> 39 and <= 45",
+        "> 45 and <= 55",
+        "> 55 and <= 63",
+        "> 63"
+      ],
+      "onehot_names": [
+        "degree_2_atom_count_bin_0:<= 31",
+        "degree_2_atom_count_bin_1:> 31 and <= 39",
+        "degree_2_atom_count_bin_2:> 39 and <= 45",
+        "degree_2_atom_count_bin_3:> 45 and <= 55",
+        "degree_2_atom_count_bin_4:> 55 and <= 63",
+        "degree_2_atom_count_bin_5:> 63"
+      ]
+    },
+    "degree_3_atom_count": {
+      "encoding": "binned",
+      "edges": [
+        3.0,
+        5.0,
+        8.0
+      ],
+      "labels": [
+        "<= 3",
+        "> 3 and <= 5",
+        "> 5 and <= 8",
+        "> 8"
+      ],
+      "onehot_names": [
+        "degree_3_atom_count_bin_0:<= 3",
+        "degree_3_atom_count_bin_1:> 3 and <= 5",
+        "degree_3_atom_count_bin_2:> 5 and <= 8",
+        "degree_3_atom_count_bin_3:> 8"
+      ]
+    },
+    "degree_4plus_atom_count": {
+      "encoding": "binned",
+      "edges": [
+        0.0,
+        1.0,
+        2.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0 and <= 1",
+        "> 1 and <= 2",
+        "> 2"
+      ],
+      "onehot_names": [
+        "degree_4plus_atom_count_bin_0:<= 0",
+        "degree_4plus_atom_count_bin_1:> 0 and <= 1",
+        "degree_4plus_atom_count_bin_2:> 1 and <= 2",
+        "degree_4plus_atom_count_bin_3:> 2"
+      ]
+    },
+    "degree_of_unsaturation": {
+      "encoding": "binned",
+      "edges": [
+        4.0,
+        5.0,
+        7.0,
+        9.0,
+        13.0
+      ],
+      "labels": [
+        "<= 4",
+        "> 4 and <= 5",
+        "> 5 and <= 7",
+        "> 7 and <= 9",
+        "> 9 and <= 13",
+        "> 13"
+      ],
+      "onehot_names": [
+        "degree_of_unsaturation_bin_0:<= 4",
+        "degree_of_unsaturation_bin_1:> 4 and <= 5",
+        "degree_of_unsaturation_bin_2:> 5 and <= 7",
+        "degree_of_unsaturation_bin_3:> 7 and <= 9",
+        "degree_of_unsaturation_bin_4:> 9 and <= 13",
+        "degree_of_unsaturation_bin_5:> 13"
+      ]
+    },
+    "double_bond_count": {
+      "encoding": "binned",
+      "edges": [
+        3.0,
+        5.0,
+        7.0,
+        9.0,
+        13.0
+      ],
+      "labels": [
+        "<= 3",
+        "> 3 and <= 5",
+        "> 5 and <= 7",
+        "> 7 and <= 9",
+        "> 9 and <= 13",
+        "> 13"
+      ],
+      "onehot_names": [
+        "double_bond_count_bin_0:<= 3",
+        "double_bond_count_bin_1:> 3 and <= 5",
+        "double_bond_count_bin_2:> 5 and <= 7",
+        "double_bond_count_bin_3:> 7 and <= 9",
+        "double_bond_count_bin_4:> 9 and <= 13",
+        "double_bond_count_bin_5:> 13"
+      ]
+    },
+    "element_B": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "element_B_bin_0:<= 0",
+        "element_B_bin_1:> 0"
+      ]
+    },
+    "element_Br": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "element_Br_bin_0:<= 0",
+        "element_Br_bin_1:> 0"
+      ]
+    },
+    "element_C": {
+      "encoding": "binned",
+      "edges": [
+        35.0,
+        42.0,
+        49.0,
+        60.0,
+        66.0
+      ],
+      "labels": [
+        "<= 35",
+        "> 35 and <= 42",
+        "> 42 and <= 49",
+        "> 49 and <= 60",
+        "> 60 and <= 66",
+        "> 66"
+      ],
+      "onehot_names": [
+        "element_C_bin_0:<= 35",
+        "element_C_bin_1:> 35 and <= 42",
+        "element_C_bin_2:> 42 and <= 49",
+        "element_C_bin_3:> 49 and <= 60",
+        "element_C_bin_4:> 60 and <= 66",
+        "element_C_bin_5:> 66"
+      ]
+    },
+    "element_Cl": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "element_Cl_bin_0:<= 0",
+        "element_Cl_bin_1:> 0"
+      ]
+    },
+    "element_F": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "element_F_bin_0:<= 0",
+        "element_F_bin_1:> 0"
+      ]
+    },
+    "element_H": {
+      "encoding": "binned",
+      "edges": [
+        64.0,
+        77.0,
+        88.0,
+        102.0,
+        113.0
+      ],
+      "labels": [
+        "<= 64",
+        "> 64 and <= 77",
+        "> 77 and <= 88",
+        "> 88 and <= 102",
+        "> 102 and <= 113",
+        "> 113"
+      ],
+      "onehot_names": [
+        "element_H_bin_0:<= 64",
+        "element_H_bin_1:> 64 and <= 77",
+        "element_H_bin_2:> 77 and <= 88",
+        "element_H_bin_3:> 88 and <= 102",
+        "element_H_bin_4:> 102 and <= 113",
+        "element_H_bin_5:> 113"
+      ]
+    },
+    "element_I": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "element_I_bin_0:<= 0",
+        "element_I_bin_1:> 0"
+      ]
+    },
+    "element_N": {
+      "encoding": "binned",
+      "edges": [
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0 and <= 1",
+        "> 1"
+      ],
+      "onehot_names": [
+        "element_N_bin_0:<= 0",
+        "element_N_bin_1:> 0 and <= 1",
+        "element_N_bin_2:> 1"
+      ]
+    },
+    "element_O": {
+      "encoding": "binned",
+      "edges": [
+        8.0,
+        10.0,
+        11.0
+      ],
+      "labels": [
+        "<= 8",
+        "> 8 and <= 10",
+        "> 10 and <= 11",
+        "> 11"
+      ],
+      "onehot_names": [
+        "element_O_bin_0:<= 8",
+        "element_O_bin_1:> 8 and <= 10",
+        "element_O_bin_2:> 10 and <= 11",
+        "element_O_bin_3:> 11"
+      ]
+    },
+    "element_P": {
+      "encoding": "binned",
+      "edges": [
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0 and <= 1",
+        "> 1"
+      ],
+      "onehot_names": [
+        "element_P_bin_0:<= 0",
+        "element_P_bin_1:> 0 and <= 1",
+        "element_P_bin_2:> 1"
+      ]
+    },
+    "element_S": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "element_S_bin_0:<= 0",
+        "element_S_bin_1:> 0"
+      ]
+    },
+    "element_Si": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "element_Si_bin_0:<= 0",
+        "element_Si_bin_1:> 0"
+      ]
+    },
+    "ester": {
+      "encoding": "binned",
+      "edges": [
+        2.0,
+        3.0
+      ],
+      "labels": [
+        "<= 2",
+        "> 2 and <= 3",
+        "> 3"
+      ],
+      "onehot_names": [
+        "ester_bin_0:<= 2",
+        "ester_bin_1:> 2 and <= 3",
+        "ester_bin_2:> 3"
+      ]
+    },
+    "ether": {
+      "encoding": "binned",
+      "edges": [
+        2.0,
+        3.0,
+        4.0
+      ],
+      "labels": [
+        "<= 2",
+        "> 2 and <= 3",
+        "> 3 and <= 4",
+        "> 4"
+      ],
+      "onehot_names": [
+        "ether_bin_0:<= 2",
+        "ether_bin_1:> 2 and <= 3",
+        "ether_bin_2:> 3 and <= 4",
+        "ether_bin_3:> 4"
+      ]
+    },
+    "exact_mass_da": {
+      "encoding": "binned",
+      "edges": [
+        651.580174564,
+        751.5152049579999,
+        834.6138563739999,
+        1006.7238007460002,
+        1112.8020510659999
+      ],
+      "labels": [
+        "<= 651.58",
+        "> 651.58 and <= 751.515",
+        "> 751.515 and <= 834.614",
+        "> 834.614 and <= 1006.72",
+        "> 1006.72 and <= 1112.8",
+        "> 1112.8"
+      ],
+      "onehot_names": [
+        "exact_mass_da_bin_0:<= 651.58",
+        "exact_mass_da_bin_1:> 651.58 and <= 751.515",
+        "exact_mass_da_bin_2:> 751.515 and <= 834.614",
+        "exact_mass_da_bin_3:> 834.614 and <= 1006.72",
+        "exact_mass_da_bin_4:> 1006.72 and <= 1112.8",
+        "exact_mass_da_bin_5:> 1112.8"
+      ]
+    },
+    "formal_charge": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "formal_charge_bin_0:<= 0",
+        "formal_charge_bin_1:> 0"
+      ]
+    },
+    "fused_ring_pair_count": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "fused_ring_pair_count_bin_0:<= 0",
+        "fused_ring_pair_count_bin_1:> 0"
+      ]
+    },
+    "fused_ring_system_count": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "fused_ring_system_count_bin_0:<= 0",
+        "fused_ring_system_count_bin_1:> 0"
+      ]
+    },
+    "halogenated": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "halogenated_bin_0:<= 0",
+        "halogenated_bin_1:> 0"
+      ]
+    },
+    "heavy_atom_count": {
+      "encoding": "binned",
+      "edges": [
+        45.0,
+        52.0,
+        58.0,
+        70.0,
+        78.0
+      ],
+      "labels": [
+        "<= 45",
+        "> 45 and <= 52",
+        "> 52 and <= 58",
+        "> 58 and <= 70",
+        "> 70 and <= 78",
+        "> 78"
+      ],
+      "onehot_names": [
+        "heavy_atom_count_bin_0:<= 45",
+        "heavy_atom_count_bin_1:> 45 and <= 52",
+        "heavy_atom_count_bin_2:> 52 and <= 58",
+        "heavy_atom_count_bin_3:> 58 and <= 70",
+        "heavy_atom_count_bin_4:> 70 and <= 78",
+        "heavy_atom_count_bin_5:> 78"
+      ]
+    },
+    "heteroatom_count": {
+      "encoding": "binned",
+      "edges": [
+        9.0,
+        10.0,
+        12.0
+      ],
+      "labels": [
+        "<= 9",
+        "> 9 and <= 10",
+        "> 10 and <= 12",
+        "> 12"
+      ],
+      "onehot_names": [
+        "heteroatom_count_bin_0:<= 9",
+        "heteroatom_count_bin_1:> 9 and <= 10",
+        "heteroatom_count_bin_2:> 10 and <= 12",
+        "heteroatom_count_bin_3:> 12"
+      ]
+    },
+    "heteroatom_exocyclic_count": {
+      "encoding": "binned",
+      "edges": [
+        9.0,
+        10.0,
+        12.0
+      ],
+      "labels": [
+        "<= 9",
+        "> 9 and <= 10",
+        "> 10 and <= 12",
+        "> 12"
+      ],
+      "onehot_names": [
+        "heteroatom_exocyclic_count_bin_0:<= 9",
+        "heteroatom_exocyclic_count_bin_1:> 9 and <= 10",
+        "heteroatom_exocyclic_count_bin_2:> 10 and <= 12",
+        "heteroatom_exocyclic_count_bin_3:> 12"
+      ]
+    },
+    "heteroatom_in_ring_count": {
+      "encoding": "binned",
+      "edges": [
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0 and <= 1",
+        "> 1"
+      ],
+      "onehot_names": [
+        "heteroatom_in_ring_count_bin_0:<= 0",
+        "heteroatom_in_ring_count_bin_1:> 0 and <= 1",
+        "heteroatom_in_ring_count_bin_2:> 1"
+      ]
+    },
+    "imide": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "imide_bin_0:<= 0",
+        "imide_bin_1:> 0"
+      ]
+    },
+    "ketone": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "ketone_bin_0:<= 0",
+        "ketone_bin_1:> 0"
+      ]
+    },
+    "lactam": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "lactam_bin_0:<= 0",
+        "lactam_bin_1:> 0"
+      ]
+    },
+    "lactone": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "lactone_bin_0:<= 0",
+        "lactone_bin_1:> 0"
+      ]
+    },
+    "molecular_weight_da": {
+      "encoding": "binned",
+      "edges": [
+        652.0579999999997,
+        752.0269999999999,
+        835.2009999999995,
+        1007.425,
+        1113.592999999999
+      ],
+      "labels": [
+        "<= 652.058",
+        "> 652.058 and <= 752.027",
+        "> 752.027 and <= 835.201",
+        "> 835.201 and <= 1007.42",
+        "> 1007.42 and <= 1113.59",
+        "> 1113.59"
+      ],
+      "onehot_names": [
+        "molecular_weight_da_bin_0:<= 652.058",
+        "molecular_weight_da_bin_1:> 652.058 and <= 752.027",
+        "molecular_weight_da_bin_2:> 752.027 and <= 835.201",
+        "molecular_weight_da_bin_3:> 835.201 and <= 1007.42",
+        "molecular_weight_da_bin_4:> 1007.42 and <= 1113.59",
+        "molecular_weight_da_bin_5:> 1113.59"
+      ]
+    },
+    "n_valence_1_count": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "n_valence_1_count_bin_0:<= 0",
+        "n_valence_1_count_bin_1:> 0"
+      ]
+    },
+    "n_valence_2_count": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "n_valence_2_count_bin_0:<= 0",
+        "n_valence_2_count_bin_1:> 0"
+      ]
+    },
+    "n_valence_3_count": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "n_valence_3_count_bin_0:<= 0",
+        "n_valence_3_count_bin_1:> 0"
+      ]
+    },
+    "n_valence_4plus_count": {
+      "encoding": "binned",
+      "edges": [
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0 and <= 1",
+        "> 1"
+      ],
+      "onehot_names": [
+        "n_valence_4plus_count_bin_0:<= 0",
+        "n_valence_4plus_count_bin_1:> 0 and <= 1",
+        "n_valence_4plus_count_bin_2:> 1"
+      ]
+    },
+    "nitrile": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "nitrile_bin_0:<= 0",
+        "nitrile_bin_1:> 0"
+      ]
+    },
+    "nitro": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "nitro_bin_0:<= 0",
+        "nitro_bin_1:> 0"
+      ]
+    },
+    "o_valence_1_count": {
+      "encoding": "binned",
+      "edges": [
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0 and <= 1",
+        "> 1"
+      ],
+      "onehot_names": [
+        "o_valence_1_count_bin_0:<= 0",
+        "o_valence_1_count_bin_1:> 0 and <= 1",
+        "o_valence_1_count_bin_2:> 1"
+      ]
+    },
+    "o_valence_2_count": {
+      "encoding": "binned",
+      "edges": [
+        7.0,
+        8.0,
+        10.0,
+        11.0
+      ],
+      "labels": [
+        "<= 7",
+        "> 7 and <= 8",
+        "> 8 and <= 10",
+        "> 10 and <= 11",
+        "> 11"
+      ],
+      "onehot_names": [
+        "o_valence_2_count_bin_0:<= 7",
+        "o_valence_2_count_bin_1:> 7 and <= 8",
+        "o_valence_2_count_bin_2:> 8 and <= 10",
+        "o_valence_2_count_bin_3:> 10 and <= 11",
+        "o_valence_2_count_bin_4:> 11"
+      ]
+    },
+    "o_valence_3plus_count": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "o_valence_3plus_count_bin_0:<= 0",
+        "o_valence_3plus_count_bin_1:> 0"
+      ]
+    },
+    "p_valence_3_count": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "p_valence_3_count_bin_0:<= 0",
+        "p_valence_3_count_bin_1:> 0"
+      ]
+    },
+    "p_valence_5plus_count": {
+      "encoding": "binned",
+      "edges": [
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0 and <= 1",
+        "> 1"
+      ],
+      "onehot_names": [
+        "p_valence_5plus_count_bin_0:<= 0",
+        "p_valence_5plus_count_bin_1:> 0 and <= 1",
+        "p_valence_5plus_count_bin_2:> 1"
+      ]
+    },
+    "phenol": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "phenol_bin_0:<= 0",
+        "phenol_bin_1:> 0"
+      ]
+    },
+    "phosphate": {
+      "encoding": "binned",
+      "edges": [
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0 and <= 1",
+        "> 1"
+      ],
+      "onehot_names": [
+        "phosphate_bin_0:<= 0",
+        "phosphate_bin_1:> 0 and <= 1",
+        "phosphate_bin_2:> 1"
+      ]
+    },
+    "phosphonate": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "phosphonate_bin_0:<= 0",
+        "phosphonate_bin_1:> 0"
+      ]
+    },
+    "ring_count": {
+      "encoding": "binned",
+      "edges": [
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0 and <= 1",
+        "> 1"
+      ],
+      "onehot_names": [
+        "ring_count_bin_0:<= 0",
+        "ring_count_bin_1:> 0 and <= 1",
+        "ring_count_bin_2:> 1"
+      ]
+    },
+    "ring_size_3_count": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "ring_size_3_count_bin_0:<= 0",
+        "ring_size_3_count_bin_1:> 0"
+      ]
+    },
+    "ring_size_4_count": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "ring_size_4_count_bin_0:<= 0",
+        "ring_size_4_count_bin_1:> 0"
+      ]
+    },
+    "ring_size_5_count": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "ring_size_5_count_bin_0:<= 0",
+        "ring_size_5_count_bin_1:> 0"
+      ]
+    },
+    "ring_size_6_count": {
+      "encoding": "binned",
+      "edges": [
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0 and <= 1",
+        "> 1"
+      ],
+      "onehot_names": [
+        "ring_size_6_count_bin_0:<= 0",
+        "ring_size_6_count_bin_1:> 0 and <= 1",
+        "ring_size_6_count_bin_2:> 1"
+      ]
+    },
+    "ring_size_7plus_count": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "ring_size_7plus_count_bin_0:<= 0",
+        "ring_size_7plus_count_bin_1:> 0"
+      ]
+    },
+    "ring_system_count": {
+      "encoding": "binned",
+      "edges": [
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0 and <= 1",
+        "> 1"
+      ],
+      "onehot_names": [
+        "ring_system_count_bin_0:<= 0",
+        "ring_system_count_bin_1:> 0 and <= 1",
+        "ring_system_count_bin_2:> 1"
+      ]
+    },
+    "rotatable_bond_count": {
+      "encoding": "binned",
+      "edges": [
+        30.0,
+        37.0,
+        42.0,
+        50.0,
+        57.0
+      ],
+      "labels": [
+        "<= 30",
+        "> 30 and <= 37",
+        "> 37 and <= 42",
+        "> 42 and <= 50",
+        "> 50 and <= 57",
+        "> 57"
+      ],
+      "onehot_names": [
+        "rotatable_bond_count_bin_0:<= 30",
+        "rotatable_bond_count_bin_1:> 30 and <= 37",
+        "rotatable_bond_count_bin_2:> 37 and <= 42",
+        "rotatable_bond_count_bin_3:> 42 and <= 50",
+        "rotatable_bond_count_bin_4:> 50 and <= 57",
+        "rotatable_bond_count_bin_5:> 57"
+      ]
+    },
+    "s_valence_2_count": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "s_valence_2_count_bin_0:<= 0",
+        "s_valence_2_count_bin_1:> 0"
+      ]
+    },
+    "s_valence_4_count": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "s_valence_4_count_bin_0:<= 0",
+        "s_valence_4_count_bin_1:> 0"
+      ]
+    },
+    "s_valence_6plus_count": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "s_valence_6plus_count_bin_0:<= 0",
+        "s_valence_6plus_count_bin_1:> 0"
+      ]
+    },
+    "spiro_atom_count": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "spiro_atom_count_bin_0:<= 0",
+        "spiro_atom_count_bin_1:> 0"
+      ]
+    },
+    "stereo_double_bond_E_count": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "stereo_double_bond_E_count_bin_0:<= 0",
+        "stereo_double_bond_E_count_bin_1:> 0"
+      ]
+    },
+    "stereo_double_bond_Z_count": {
+      "encoding": "binned",
+      "edges": [
+        0.0,
+        2.0,
+        4.0,
+        6.0,
+        9.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0 and <= 2",
+        "> 2 and <= 4",
+        "> 4 and <= 6",
+        "> 6 and <= 9",
+        "> 9"
+      ],
+      "onehot_names": [
+        "stereo_double_bond_Z_count_bin_0:<= 0",
+        "stereo_double_bond_Z_count_bin_1:> 0 and <= 2",
+        "stereo_double_bond_Z_count_bin_2:> 2 and <= 4",
+        "stereo_double_bond_Z_count_bin_3:> 4 and <= 6",
+        "stereo_double_bond_Z_count_bin_4:> 6 and <= 9",
+        "stereo_double_bond_Z_count_bin_5:> 9"
+      ]
+    },
+    "stereo_double_bond_unspecified_count": {
+      "encoding": "binned",
+      "edges": [
+        2.0,
+        3.0,
+        4.0
+      ],
+      "labels": [
+        "<= 2",
+        "> 2 and <= 3",
+        "> 3 and <= 4",
+        "> 4"
+      ],
+      "onehot_names": [
+        "stereo_double_bond_unspecified_count_bin_0:<= 2",
+        "stereo_double_bond_unspecified_count_bin_1:> 2 and <= 3",
+        "stereo_double_bond_unspecified_count_bin_2:> 3 and <= 4",
+        "stereo_double_bond_unspecified_count_bin_3:> 4"
+      ]
+    },
+    "sulfate": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "sulfate_bin_0:<= 0",
+        "sulfate_bin_1:> 0"
+      ]
+    },
+    "sulfonamide": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "sulfonamide_bin_0:<= 0",
+        "sulfonamide_bin_1:> 0"
+      ]
+    },
+    "sulfoxide": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "sulfoxide_bin_0:<= 0",
+        "sulfoxide_bin_1:> 0"
+      ]
+    },
+    "total_atom_count_with_h": {
+      "encoding": "binned",
+      "edges": [
+        110.0,
+        129.0,
+        147.0,
+        173.0,
+        191.0
+      ],
+      "labels": [
+        "<= 110",
+        "> 110 and <= 129",
+        "> 129 and <= 147",
+        "> 147 and <= 173",
+        "> 173 and <= 191",
+        "> 191"
+      ],
+      "onehot_names": [
+        "total_atom_count_with_h_bin_0:<= 110",
+        "total_atom_count_with_h_bin_1:> 110 and <= 129",
+        "total_atom_count_with_h_bin_2:> 129 and <= 147",
+        "total_atom_count_with_h_bin_3:> 147 and <= 173",
+        "total_atom_count_with_h_bin_4:> 173 and <= 191",
+        "total_atom_count_with_h_bin_5:> 191"
+      ]
+    },
+    "triple_bond_count": {
+      "encoding": "binned",
+      "edges": [
+        0.0
+      ],
+      "labels": [
+        "<= 0",
+        "> 0"
+      ],
+      "onehot_names": [
+        "triple_bond_count_bin_0:<= 0",
+        "triple_bond_count_bin_1:> 0"
+      ]
+    },
+    "unassigned_chiral_center_count": {
+      "encoding": "binned",
+      "edges": [
+        2.0,
+        3.0,
+        6.0
+      ],
+      "labels": [
+        "<= 2",
+        "> 2 and <= 3",
+        "> 3 and <= 6",
+        "> 6"
+      ],
+      "onehot_names": [
+        "unassigned_chiral_center_count_bin_0:<= 2",
+        "unassigned_chiral_center_count_bin_1:> 2 and <= 3",
+        "unassigned_chiral_center_count_bin_2:> 3 and <= 6",
+        "unassigned_chiral_center_count_bin_3:> 6"
+      ]
+    }
+  },
+  "feature_vector_index_map": [
+    "maccs_0",
+    "maccs_1",
+    "maccs_2",
+    "maccs_3",
+    "maccs_4",
+    "maccs_5",
+    "maccs_6",
+    "maccs_7",
+    "maccs_8",
+    "maccs_9",
+    "maccs_10",
+    "maccs_11",
+    "maccs_12",
+    "maccs_13",
+    "maccs_14",
+    "maccs_15",
+    "maccs_16",
+    "maccs_17",
+    "maccs_18",
+    "maccs_19",
+    "maccs_20",
+    "maccs_21",
+    "maccs_22",
+    "maccs_23",
+    "maccs_24",
+    "maccs_25",
+    "maccs_26",
+    "maccs_27",
+    "maccs_28",
+    "maccs_29",
+    "maccs_30",
+    "maccs_31",
+    "maccs_32",
+    "maccs_33",
+    "maccs_34",
+    "maccs_35",
+    "maccs_36",
+    "maccs_37",
+    "maccs_38",
+    "maccs_39",
+    "maccs_40",
+    "maccs_41",
+    "maccs_42",
+    "maccs_43",
+    "maccs_44",
+    "maccs_45",
+    "maccs_46",
+    "maccs_47",
+    "maccs_48",
+    "maccs_49",
+    "maccs_50",
+    "maccs_51",
+    "maccs_52",
+    "maccs_53",
+    "maccs_54",
+    "maccs_55",
+    "maccs_56",
+    "maccs_57",
+    "maccs_58",
+    "maccs_59",
+    "maccs_60",
+    "maccs_61",
+    "maccs_62",
+    "maccs_63",
+    "maccs_64",
+    "maccs_65",
+    "maccs_66",
+    "maccs_67",
+    "maccs_68",
+    "maccs_69",
+    "maccs_70",
+    "maccs_71",
+    "maccs_72",
+    "maccs_73",
+    "maccs_74",
+    "maccs_75",
+    "maccs_76",
+    "maccs_77",
+    "maccs_78",
+    "maccs_79",
+    "maccs_80",
+    "maccs_81",
+    "maccs_82",
+    "maccs_83",
+    "maccs_84",
+    "maccs_85",
+    "maccs_86",
+    "maccs_87",
+    "maccs_88",
+    "maccs_89",
+    "maccs_90",
+    "maccs_91",
+    "maccs_92",
+    "maccs_93",
+    "maccs_94",
+    "maccs_95",
+    "maccs_96",
+    "maccs_97",
+    "maccs_98",
+    "maccs_99",
+    "maccs_100",
+    "maccs_101",
+    "maccs_102",
+    "maccs_103",
+    "maccs_104",
+    "maccs_105",
+    "maccs_106",
+    "maccs_107",
+    "maccs_108",
+    "maccs_109",
+    "maccs_110",
+    "maccs_111",
+    "maccs_112",
+    "maccs_113",
+    "maccs_114",
+    "maccs_115",
+    "maccs_116",
+    "maccs_117",
+    "maccs_118",
+    "maccs_119",
+    "maccs_120",
+    "maccs_121",
+    "maccs_122",
+    "maccs_123",
+    "maccs_124",
+    "maccs_125",
+    "maccs_126",
+    "maccs_127",
+    "maccs_128",
+    "maccs_129",
+    "maccs_130",
+    "maccs_131",
+    "maccs_132",
+    "maccs_133",
+    "maccs_134",
+    "maccs_135",
+    "maccs_136",
+    "maccs_137",
+    "maccs_138",
+    "maccs_139",
+    "maccs_140",
+    "maccs_141",
+    "maccs_142",
+    "maccs_143",
+    "maccs_144",
+    "maccs_145",
+    "maccs_146",
+    "maccs_147",
+    "maccs_148",
+    "maccs_149",
+    "maccs_150",
+    "maccs_151",
+    "maccs_152",
+    "maccs_153",
+    "maccs_154",
+    "maccs_155",
+    "maccs_156",
+    "maccs_157",
+    "maccs_158",
+    "maccs_159",
+    "maccs_160",
+    "maccs_161",
+    "maccs_162",
+    "maccs_163",
+    "maccs_164",
+    "maccs_165",
+    "maccs_166",
+    "alcohol_bin_0:<= 0",
+    "alcohol_bin_1:> 0 and <= 1",
+    "alcohol_bin_2:> 1 and <= 4",
+    "alcohol_bin_3:> 4",
+    "aldehyde_bin_0:<= 0",
+    "aldehyde_bin_1:> 0",
+    "aliphatic_ring_count_bin_0:<= 0",
+    "aliphatic_ring_count_bin_1:> 0 and <= 1",
+    "aliphatic_ring_count_bin_2:> 1",
+    "amide_bin_0:<= 0",
+    "amide_bin_1:> 0",
+    "amine_bin_0:<= 0",
+    "amine_bin_1:> 0",
+    "aniline_bin_0:<= 0",
+    "aniline_bin_1:> 0",
+    "aromatic_atom_count_bin_0:<= 0",
+    "aromatic_atom_count_bin_1:> 0",
+    "aromatic_heteroatom_count_bin_0:<= 0",
+    "aromatic_heteroatom_count_bin_1:> 0",
+    "aromatic_n_count_bin_0:<= 0",
+    "aromatic_n_count_bin_1:> 0",
+    "aromatic_o_count_bin_0:<= 0",
+    "aromatic_o_count_bin_1:> 0",
+    "aromatic_p_count_bin_0:<= 0",
+    "aromatic_p_count_bin_1:> 0",
+    "aromatic_ring_bin_0:<= 0",
+    "aromatic_ring_bin_1:> 0",
+    "aromatic_ring_count_bin_0:<= 0",
+    "aromatic_ring_count_bin_1:> 0",
+    "aromatic_s_count_bin_0:<= 0",
+    "aromatic_s_count_bin_1:> 0",
+    "assigned_chiral_center_count_bin_0:<= 0",
+    "assigned_chiral_center_count_bin_1:> 0",
+    "branch_point_count_bin_0:<= 4",
+    "branch_point_count_bin_1:> 4 and <= 5",
+    "branch_point_count_bin_2:> 5 and <= 6",
+    "branch_point_count_bin_3:> 6 and <= 8",
+    "branch_point_count_bin_4:> 8",
+    "bridgehead_atom_count_bin_0:<= 0",
+    "bridgehead_atom_count_bin_1:> 0",
+    "carboxylic_acid_bin_0:<= 0",
+    "carboxylic_acid_bin_1:> 0",
+    "chiral_center_count_bin_0:<= 2",
+    "chiral_center_count_bin_1:> 2 and <= 3",
+    "chiral_center_count_bin_2:> 3 and <= 6",
+    "chiral_center_count_bin_3:> 6",
+    "connected_component_count_bin_0:<= 1",
+    "connected_component_count_bin_1:> 1",
+    "degree_1_atom_count_bin_0:<= 7",
+    "degree_1_atom_count_bin_1:> 7 and <= 8",
+    "degree_1_atom_count_bin_2:> 8 and <= 9",
+    "degree_1_atom_count_bin_3:> 9",
+    "degree_2_atom_count_bin_0:<= 31",
+    "degree_2_atom_count_bin_1:> 31 and <= 39",
+    "degree_2_atom_count_bin_2:> 39 and <= 45",
+    "degree_2_atom_count_bin_3:> 45 and <= 55",
+    "degree_2_atom_count_bin_4:> 55 and <= 63",
+    "degree_2_atom_count_bin_5:> 63",
+    "degree_3_atom_count_bin_0:<= 3",
+    "degree_3_atom_count_bin_1:> 3 and <= 5",
+    "degree_3_atom_count_bin_2:> 5 and <= 8",
+    "degree_3_atom_count_bin_3:> 8",
+    "degree_4plus_atom_count_bin_0:<= 0",
+    "degree_4plus_atom_count_bin_1:> 0 and <= 1",
+    "degree_4plus_atom_count_bin_2:> 1 and <= 2",
+    "degree_4plus_atom_count_bin_3:> 2",
+    "degree_of_unsaturation_bin_0:<= 4",
+    "degree_of_unsaturation_bin_1:> 4 and <= 5",
+    "degree_of_unsaturation_bin_2:> 5 and <= 7",
+    "degree_of_unsaturation_bin_3:> 7 and <= 9",
+    "degree_of_unsaturation_bin_4:> 9 and <= 13",
+    "degree_of_unsaturation_bin_5:> 13",
+    "double_bond_count_bin_0:<= 3",
+    "double_bond_count_bin_1:> 3 and <= 5",
+    "double_bond_count_bin_2:> 5 and <= 7",
+    "double_bond_count_bin_3:> 7 and <= 9",
+    "double_bond_count_bin_4:> 9 and <= 13",
+    "double_bond_count_bin_5:> 13",
+    "element_B_bin_0:<= 0",
+    "element_B_bin_1:> 0",
+    "element_Br_bin_0:<= 0",
+    "element_Br_bin_1:> 0",
+    "element_C_bin_0:<= 35",
+    "element_C_bin_1:> 35 and <= 42",
+    "element_C_bin_2:> 42 and <= 49",
+    "element_C_bin_3:> 49 and <= 60",
+    "element_C_bin_4:> 60 and <= 66",
+    "element_C_bin_5:> 66",
+    "element_Cl_bin_0:<= 0",
+    "element_Cl_bin_1:> 0",
+    "element_F_bin_0:<= 0",
+    "element_F_bin_1:> 0",
+    "element_H_bin_0:<= 64",
+    "element_H_bin_1:> 64 and <= 77",
+    "element_H_bin_2:> 77 and <= 88",
+    "element_H_bin_3:> 88 and <= 102",
+    "element_H_bin_4:> 102 and <= 113",
+    "element_H_bin_5:> 113",
+    "element_I_bin_0:<= 0",
+    "element_I_bin_1:> 0",
+    "element_N_bin_0:<= 0",
+    "element_N_bin_1:> 0 and <= 1",
+    "element_N_bin_2:> 1",
+    "element_O_bin_0:<= 8",
+    "element_O_bin_1:> 8 and <= 10",
+    "element_O_bin_2:> 10 and <= 11",
+    "element_O_bin_3:> 11",
+    "element_P_bin_0:<= 0",
+    "element_P_bin_1:> 0 and <= 1",
+    "element_P_bin_2:> 1",
+    "element_S_bin_0:<= 0",
+    "element_S_bin_1:> 0",
+    "element_Si_bin_0:<= 0",
+    "element_Si_bin_1:> 0",
+    "ester_bin_0:<= 2",
+    "ester_bin_1:> 2 and <= 3",
+    "ester_bin_2:> 3",
+    "ether_bin_0:<= 2",
+    "ether_bin_1:> 2 and <= 3",
+    "ether_bin_2:> 3 and <= 4",
+    "ether_bin_3:> 4",
+    "exact_mass_da_bin_0:<= 651.58",
+    "exact_mass_da_bin_1:> 651.58 and <= 751.515",
+    "exact_mass_da_bin_2:> 751.515 and <= 834.614",
+    "exact_mass_da_bin_3:> 834.614 and <= 1006.72",
+    "exact_mass_da_bin_4:> 1006.72 and <= 1112.8",
+    "exact_mass_da_bin_5:> 1112.8",
+    "formal_charge_bin_0:<= 0",
+    "formal_charge_bin_1:> 0",
+    "fused_ring_pair_count_bin_0:<= 0",
+    "fused_ring_pair_count_bin_1:> 0",
+    "fused_ring_system_count_bin_0:<= 0",
+    "fused_ring_system_count_bin_1:> 0",
+    "halogenated_bin_0:<= 0",
+    "halogenated_bin_1:> 0",
+    "heavy_atom_count_bin_0:<= 45",
+    "heavy_atom_count_bin_1:> 45 and <= 52",
+    "heavy_atom_count_bin_2:> 52 and <= 58",
+    "heavy_atom_count_bin_3:> 58 and <= 70",
+    "heavy_atom_count_bin_4:> 70 and <= 78",
+    "heavy_atom_count_bin_5:> 78",
+    "heteroatom_count_bin_0:<= 9",
+    "heteroatom_count_bin_1:> 9 and <= 10",
+    "heteroatom_count_bin_2:> 10 and <= 12",
+    "heteroatom_count_bin_3:> 12",
+    "heteroatom_exocyclic_count_bin_0:<= 9",
+    "heteroatom_exocyclic_count_bin_1:> 9 and <= 10",
+    "heteroatom_exocyclic_count_bin_2:> 10 and <= 12",
+    "heteroatom_exocyclic_count_bin_3:> 12",
+    "heteroatom_in_ring_count_bin_0:<= 0",
+    "heteroatom_in_ring_count_bin_1:> 0 and <= 1",
+    "heteroatom_in_ring_count_bin_2:> 1",
+    "imide_bin_0:<= 0",
+    "imide_bin_1:> 0",
+    "ketone_bin_0:<= 0",
+    "ketone_bin_1:> 0",
+    "lactam_bin_0:<= 0",
+    "lactam_bin_1:> 0",
+    "lactone_bin_0:<= 0",
+    "lactone_bin_1:> 0",
+    "molecular_weight_da_bin_0:<= 652.058",
+    "molecular_weight_da_bin_1:> 652.058 and <= 752.027",
+    "molecular_weight_da_bin_2:> 752.027 and <= 835.201",
+    "molecular_weight_da_bin_3:> 835.201 and <= 1007.42",
+    "molecular_weight_da_bin_4:> 1007.42 and <= 1113.59",
+    "molecular_weight_da_bin_5:> 1113.59",
+    "n_valence_1_count_bin_0:<= 0",
+    "n_valence_1_count_bin_1:> 0",
+    "n_valence_2_count_bin_0:<= 0",
+    "n_valence_2_count_bin_1:> 0",
+    "n_valence_3_count_bin_0:<= 0",
+    "n_valence_3_count_bin_1:> 0",
+    "n_valence_4plus_count_bin_0:<= 0",
+    "n_valence_4plus_count_bin_1:> 0 and <= 1",
+    "n_valence_4plus_count_bin_2:> 1",
+    "nitrile_bin_0:<= 0",
+    "nitrile_bin_1:> 0",
+    "nitro_bin_0:<= 0",
+    "nitro_bin_1:> 0",
+    "o_valence_1_count_bin_0:<= 0",
+    "o_valence_1_count_bin_1:> 0 and <= 1",
+    "o_valence_1_count_bin_2:> 1",
+    "o_valence_2_count_bin_0:<= 7",
+    "o_valence_2_count_bin_1:> 7 and <= 8",
+    "o_valence_2_count_bin_2:> 8 and <= 10",
+    "o_valence_2_count_bin_3:> 10 and <= 11",
+    "o_valence_2_count_bin_4:> 11",
+    "o_valence_3plus_count_bin_0:<= 0",
+    "o_valence_3plus_count_bin_1:> 0",
+    "p_valence_3_count_bin_0:<= 0",
+    "p_valence_3_count_bin_1:> 0",
+    "p_valence_5plus_count_bin_0:<= 0",
+    "p_valence_5plus_count_bin_1:> 0 and <= 1",
+    "p_valence_5plus_count_bin_2:> 1",
+    "phenol_bin_0:<= 0",
+    "phenol_bin_1:> 0",
+    "phosphate_bin_0:<= 0",
+    "phosphate_bin_1:> 0 and <= 1",
+    "phosphate_bin_2:> 1",
+    "phosphonate_bin_0:<= 0",
+    "phosphonate_bin_1:> 0",
+    "ring_count_bin_0:<= 0",
+    "ring_count_bin_1:> 0 and <= 1",
+    "ring_count_bin_2:> 1",
+    "ring_size_3_count_bin_0:<= 0",
+    "ring_size_3_count_bin_1:> 0",
+    "ring_size_4_count_bin_0:<= 0",
+    "ring_size_4_count_bin_1:> 0",
+    "ring_size_5_count_bin_0:<= 0",
+    "ring_size_5_count_bin_1:> 0",
+    "ring_size_6_count_bin_0:<= 0",
+    "ring_size_6_count_bin_1:> 0 and <= 1",
+    "ring_size_6_count_bin_2:> 1",
+    "ring_size_7plus_count_bin_0:<= 0",
+    "ring_size_7plus_count_bin_1:> 0",
+    "ring_system_count_bin_0:<= 0",
+    "ring_system_count_bin_1:> 0 and <= 1",
+    "ring_system_count_bin_2:> 1",
+    "rotatable_bond_count_bin_0:<= 30",
+    "rotatable_bond_count_bin_1:> 30 and <= 37",
+    "rotatable_bond_count_bin_2:> 37 and <= 42",
+    "rotatable_bond_count_bin_3:> 42 and <= 50",
+    "rotatable_bond_count_bin_4:> 50 and <= 57",
+    "rotatable_bond_count_bin_5:> 57",
+    "s_valence_2_count_bin_0:<= 0",
+    "s_valence_2_count_bin_1:> 0",
+    "s_valence_4_count_bin_0:<= 0",
+    "s_valence_4_count_bin_1:> 0",
+    "s_valence_6plus_count_bin_0:<= 0",
+    "s_valence_6plus_count_bin_1:> 0",
+    "spiro_atom_count_bin_0:<= 0",
+    "spiro_atom_count_bin_1:> 0",
+    "stereo_double_bond_E_count_bin_0:<= 0",
+    "stereo_double_bond_E_count_bin_1:> 0",
+    "stereo_double_bond_Z_count_bin_0:<= 0",
+    "stereo_double_bond_Z_count_bin_1:> 0 and <= 2",
+    "stereo_double_bond_Z_count_bin_2:> 2 and <= 4",
+    "stereo_double_bond_Z_count_bin_3:> 4 and <= 6",
+    "stereo_double_bond_Z_count_bin_4:> 6 and <= 9",
+    "stereo_double_bond_Z_count_bin_5:> 9",
+    "stereo_double_bond_unspecified_count_bin_0:<= 2",
+    "stereo_double_bond_unspecified_count_bin_1:> 2 and <= 3",
+    "stereo_double_bond_unspecified_count_bin_2:> 3 and <= 4",
+    "stereo_double_bond_unspecified_count_bin_3:> 4",
+    "sulfate_bin_0:<= 0",
+    "sulfate_bin_1:> 0",
+    "sulfonamide_bin_0:<= 0",
+    "sulfonamide_bin_1:> 0",
+    "sulfoxide_bin_0:<= 0",
+    "sulfoxide_bin_1:> 0",
+    "total_atom_count_with_h_bin_0:<= 110",
+    "total_atom_count_with_h_bin_1:> 110 and <= 129",
+    "total_atom_count_with_h_bin_2:> 129 and <= 147",
+    "total_atom_count_with_h_bin_3:> 147 and <= 173",
+    "total_atom_count_with_h_bin_4:> 173 and <= 191",
+    "total_atom_count_with_h_bin_5:> 191",
+    "triple_bond_count_bin_0:<= 0",
+    "triple_bond_count_bin_1:> 0",
+    "unassigned_chiral_center_count_bin_0:<= 2",
+    "unassigned_chiral_center_count_bin_1:> 2 and <= 3",
+    "unassigned_chiral_center_count_bin_2:> 3 and <= 6",
+    "unassigned_chiral_center_count_bin_3:> 6"
+  ]
+}
