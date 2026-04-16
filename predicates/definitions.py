@@ -404,6 +404,18 @@ HELPER_PREDICATES: Dict[str, str] = {
         heavy_atom_count(0).
     """,
 
+    "heteroatom_count": """
+        heteroatom_count(0).
+    """,
+
+    "heteroatom_exocyclic_count": """
+        heteroatom_exocyclic_count(0).
+    """,
+
+    "heteroatom_in_ring_count": """
+        heteroatom_in_ring_count(0).
+    """,
+
     "formal_charge": """
         formal_charge(0).
     """,
@@ -414,6 +426,22 @@ HELPER_PREDICATES: Dict[str, str] = {
 
     "fused_ring_system_count": """
         fused_ring_system_count(0).
+    """,
+
+    "imide": """
+        imide(0).
+    """,
+
+    "ketone": """
+        ketone(0).
+    """,
+
+    "lactam": """
+        lactam(0).
+    """,
+
+    "lactone": """
+        lactone(0).
     """,
 
     "halogenated": """
@@ -1710,6 +1738,8 @@ FEATURE_VECTOR_DEFINITIONS: Dict[int, ASPPredicate] = {
         """,
         "domain": {0, 1}
     },
+
+    ##TODO: currently use placeholder helper method to define heavy_atom_count
     296: {
         "predicate": "heavy_atom_count_bin_0",
         "definition": """
@@ -1768,6 +1798,178 @@ FEATURE_VECTOR_DEFINITIONS: Dict[int, ASPPredicate] = {
         """,
         "domain": {0, 1}
     },
+    302: {
+        "predicate": "heteroatom_count_bin_0",
+        "definition": """
+            heteroatom_count_bin_0 :-
+                heteroatom_count(N),
+                N <= 9.
+        """,
+        "domain": {0, 1}
+    },
+    303: {
+        "predicate": "heteroatom_count_bin_1",
+        "definition": """
+            heteroatom_count_bin_1 :-
+                heteroatom_count(N),
+                N > 9,
+                N <= 10.
+        """,
+        "domain": {0, 1}
+    },
+    304: {
+        "predicate": "heteroatom_count_bin_2",
+        "definition": """
+            heteroatom_count_bin_2 :-
+                heteroatom_count(N),
+                N > 10,
+                N <= 12.
+        """,
+        "domain": {0, 1}
+    },
+    305: {
+        "predicate": "heteroatom_count_bin_3",
+        "definition": """
+            heteroatom_count_bin_3 :-
+                heteroatom_count(N),
+                N > 12.
+        """,
+        "domain": {0, 1}
+    },
+    306: {
+        "predicate": "heteroatom_exocyclic_count_bin_0",
+        "definition": """
+            heteroatom_exocyclic_count_bin_0 :-
+                heteroatom_exocyclic_count(N),
+                N <= 9.
+        """,
+        "domain": {0, 1}
+    },
+    307: {
+        "predicate": "heteroatom_exocyclic_count_bin_1",
+        "definition": """
+            heteroatom_exocyclic_count_bin_1 :-
+                heteroatom_exocyclic_count(N),
+                N > 9,
+                N <= 10.
+        """,
+        "domain": {0, 1}
+    },
+    308: {
+        "predicate": "heteroatom_exocyclic_count_bin_2",
+        "definition": """
+            heteroatom_exocyclic_count_bin_2 :-
+                heteroatom_exocyclic_count(N),
+                N > 10,
+                N <= 12.
+        """,
+        "domain": {0, 1}
+    },
+    309: {
+        "predicate": "heteroatom_exocyclic_count_bin_3",
+        "definition": """
+            heteroatom_exocyclic_count_bin_3 :-
+                heteroatom_exocyclic_count(N),
+                N > 12.
+        """,
+        "domain": {0, 1}
+    },
+    310: {
+        "predicate": "heteroatom_in_ring_count_bin_0",
+        "definition": """
+            heteroatom_in_ring_count_bin_0 :-
+                heteroatom_in_ring_count(0).
+        """,
+        "domain": {0, 1}
+    },
+    311: {
+        "predicate": "heteroatom_in_ring_count_bin_1",
+        "definition": """
+            heteroatom_in_ring_count_bin_1 :-
+                heteroatom_in_ring_count(N),
+                N > 0,
+                N <= 1.
+        """,
+        "domain": {0, 1}
+    },
+    312: {
+        "predicate": "heteroatom_in_ring_count_bin_2",
+        "definition": """
+            heteroatom_in_ring_count_bin_2 :-
+                heteroatom_in_ring_count(N),
+                N > 1.
+        """,
+        "domain": {0, 1}
+    },
+    313: {
+        "predicate": "imide_bin_0",
+        "definition": """
+            imide_bin_0 :-
+                imide(0).
+        """,
+        "domain": {0, 1}
+    },
+    314: {
+        "predicate": "imide_bin_1",
+        "definition": """
+            imide_bin_1 :-
+                imide(N),
+                N > 0.
+        """,
+        "domain": {0, 1}
+    },
+    315: {
+        "predicate": "ketone_bin_0",
+        "definition": """
+            ketone_bin_0 :-
+                ketone(0).
+        """,
+        "domain": {0, 1}
+    },
+    316: {
+        "predicate": "ketone_bin_1",
+        "definition": """
+            ketone_bin_1 :-
+                ketone(N),
+                N > 0.
+        """,
+        "domain": {0, 1}
+    },
+    317: {
+        "predicate": "lactam_bin_0",
+        "definition": """
+            lactam_bin_0 :-
+                lactam(0).
+        """,
+        "domain": {0, 1}
+    },
+    318: {
+        "predicate": "lactam_bin_1",
+        "definition": """
+            lactam_bin_1 :-
+                lactam(N),
+                N > 0.
+        """,
+        "domain": {0, 1}
+    },
+    319: {
+        "predicate": "lactone_bin_0",
+        "definition": """
+            lactone_bin_0 :-
+                lactone(0).
+        """,
+        "domain": {0, 1}
+    },
+    320: {
+        "predicate": "lactone_bin_1",
+        "definition": """
+            lactone_bin_1 :-
+                lactone(N),
+                N > 0.
+        """,
+        "domain": {0, 1}
+    },
+    
 }
 
 COUNT_KEYS = ['num_carbons', 'num_hydrogens', 'num_nitrogens', 'num_oxygens']
