@@ -70,8 +70,11 @@ def solve(asp_code: list[str], atom_counts: int, output_list_of_smiles: bool = F
         input=output,
         capture_output=True,
         text=True,
-        check=True
+        check=False
     )
+
+    if result.returncode != 0:
+        raise RuntimeError(f"smiles-vis.py failed with error: {result.stderr}")
 
     visualisations = result.stdout.split("\n")
     asp_output = output.split("\n")

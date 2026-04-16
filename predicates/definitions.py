@@ -467,6 +467,16 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
     ########################
     ##### DOUBLE BONDS #####
     ########################
+    60: {
+        "predicate": "has_s_o_double_bond",
+        "definition": """
+            has_s_o_double_bond :-
+                double_bond_between(I, J),
+                smiles_symbol(I, "S"),
+                symbol(J, "O").
+        """,
+        "domain": {0, 1}
+    },
     99: {
         "predicate": "has_c_c_double_bond",
         "definition": """
