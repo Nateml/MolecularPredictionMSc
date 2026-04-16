@@ -1,4 +1,4 @@
-% Source: eval-2024-asp-molecules (commit: 8fe473e) (modified by removing embedded python code)
+% Source: eval-2024-asp-molecules (commit: 8fe473e) (modified by removing embedded python code and adding P and S as elements)
 % URL: https://github.com/knowsys/eval-2024-asp-molecules
 % File: smiles.lp
 % INPUT: C_{c}H_{h},O_{o}
@@ -7,16 +7,43 @@
 #const h=0.
 #const n=0.
 #const o=0.
+#const p=0.
+#const s=0.
+
 
 molecular_formula("C", c) :- c != 0.
 molecular_formula("H", h) :- h != 0.
 molecular_formula("N", n) :- n != 0.
 molecular_formula("O", o) :- o != 0.
 
+1{ phos_p3(0..p) }1       :- p != 0.
+molecular_formula("P3", C)   :- phos_p3(C), C > 0.
+molecular_formula("P5", p-C) :- phos_p3(C), p-C > 0.
+
+% Split s sulfur atoms among valence-2 (S2), valence-4 (S4), valence-6 (S6)
+1{ sulf_s2(0..s) }1           :- s != 0.
+1{ sulf_s4(0..RS) }1          :- s != 0, sulf_s2(C2), RS = s-C2.
+molecular_formula("S2", C2)   :- sulf_s2(C2), C2 > 0.
+molecular_formula("S4", C4)   :- sulf_s4(C4), C4 > 0.
+molecular_formula("S6", s-C2-C4) :- sulf_s2(C2), sulf_s4(C4), s-C2-C4 > 0.
+
 element("C", 6, 4) :- molecular_formula("C", C), C > 0.
 element("H", 1, 1) :- molecular_formula("H", H), H > 0.
 element("N", 7, 3) :- molecular_formula("N", N), N > 0.
 element("O", 8, 2) :- molecular_formula("O", O), O > 0.
+element("P3", 15, 3) :- molecular_formula("P3", P3), P3 > 0.
+element("P5", 15, 5) :- molecular_formula("P5", P5), P5 > 0.
+element("S2", 16, 2) :- molecular_formula("S2", S2), S2 > 0.
+element("S4", 16, 4) :- molecular_formula("S4", S4), S4 > 0.
+element("S6", 16, 6) :- molecular_formula("S6", S6), S6 > 0.
+
+smiles_symbol(I, "P") :- symbol(I, "P3").
+smiles_symbol(I, "P") :- symbol(I, "P5").
+smiles_symbol(I, "S") :- symbol(I, "S2").
+smiles_symbol(I, "S") :- symbol(I, "S4").
+smiles_symbol(I, "S") :- symbol(I, "S6").
+smiles_symbol(I, E)   :- symbol(I, E), E != "P3", E != "P5", E != "S2", E != "S4", E != "S6".
+
 
 % To allow alternative valence values for an element, add e.g. `element_valence("C",2)`.
 
@@ -82,17 +109,19 @@ atom(1..ATOM_COUNT) :- non_hydrogen_atom_count(ATOM_COUNT).
 
 
 % Compute, how many atoms have which valnce value.
-valence(1;3;4).
+valence(1;3;4;5;6).
 valence_count(VALENCE, X) :- X = #sum{ COUNT, ELEMENT : molecular_formula(ELEMENT, COUNT), element(ELEMENT, _, VALENCE) }, valence(VALENCE), not element_valence(_, VALENCE).
+
 element_valence(ELEMENT, VALENCE) :- element(ELEMENT, _, VALENCE), element_valence(ELEMENT, _).
 1{ element_valence_count(ELEMENT, VALENCE, 0..COUNT) }1 :- element_valence(ELEMENT, VALENCE), molecular_formula(ELEMENT, COUNT).
 :- molecular_formula(ELEMENT, COUNT), COUNT != #sum{ C, VALENCE : element_valence_count(ELEMENT, VALENCE, C) }, element_valence(ELEMENT, _).
 valence_count(VALENCE, X) :- X = #sum{ COUNT, ELEMENT : element_valence_count(ELEMENT, VALENCE, COUNT) }, element_valence(_, VALENCE).
+
 % Compute, how many cycles / multi-bonds there should be, based on the hydrogen count in the sum formula.
-num_cycles_or_multi_bonds((2*C+2 + N - H) / 2) :- valence_count(4, C), valence_count(3, N), valence_count(1, H).
+num_cycles_or_multi_bonds((2*C+2 + N - H + 3*P5 + 4*S6) / 2) :- valence_count(4, C), valence_count(3, N), valence_count(1, H), valence_count(5, P5), valence_count(6, S6).
 % SENIOR rules (adaptation)
-:- valence_count(4, C), valence_count(3, N), valence_count(1, H), 2*C+2 + N < H. % --> cannot have too many atoms with valence 1
-:- valence_count(4, C), valence_count(3, N), valence_count(1, H), (2*C+2 + N - H) \ 2 != 0. % --> cannot have "half a cycle"
+:- valence_count(4, C), valence_count(3, N), valence_count(5, P5), valence_count(6, S6), valence_count(1, H), 2*C+2 + N + 3*P5 + 4*S6 < H. % --> cannot have too many atoms with valence 1
+:- valence_count(4, C), valence_count(3, N), valence_count(5, P5), valence_count(6, S6), valence_count(1, H), (2*C+2 + N + 3*P5 + 4*S6 - H) \ 2 != 0. % --> cannot have "half a cycle"
 % Nondeterministically decide how many multi-bonds and cycles there should be.
 1{ num_multi_bonds(0..NUM_CYCLES_OR_MULTI_BONDS) }1 :- num_cycles_or_multi_bonds(NUM_CYCLES_OR_MULTI_BONDS), NUM_CYCLES_OR_MULTI_BONDS > 0.
 num_multi_bonds(0) :- num_cycles_or_multi_bonds(0).
@@ -212,8 +241,14 @@ free_bonds(I, FREE_BONDS) :- preset_bonds(I, BONDS_PRE),
 
 :- atom(I), not free_bonds(I, _).
 
+% Prevent using higher valence variant when lower would suffice
+:- symbol(I, "P5"), free_bonds(I, F), F >= 4.
+:- symbol(I, "S4"), free_bonds(I, F), F >= 2.
+:- symbol(I, "S6"), free_bonds(I, F), F >= 2.
+
 % Not neccessary, but improves performance...
-:- branching(1, 4), parent(1, _, I), multi_bond(I, _).
+:- branching(1, 4), parent(1, _, I), multi_bond(I, _),
+    symbol(1, ELEMENT), element(ELEMENT, _, VALENCE), VALENCE <= 4.  % For higher valence elements, four bonds are possible
 % Prohibit three double bonds at root atom.
 :- multi_bond(I1, 2), multi_bond(I2, 2), multi_bond(I3, 2),
    parent(1, CHAIN_1, I1), parent(1, CHAIN_2, I2), parent(1, CHAIN_3, I3),
@@ -221,7 +256,8 @@ free_bonds(I, FREE_BONDS) :- preset_bonds(I, BONDS_PRE),
 % Prohibit two double bond at non-root atom.
 :- multi_bond(I1, 2), multi_bond(I2, 2),
    parent(I, CHAIN_1, I1), parent(I, CHAIN_2, I2),
-   I1 < I2, CHAIN_1 < CHAIN_2, I > 1.
+   I1 < I2, CHAIN_1 < CHAIN_2, I > 1,
+   symbol(1, ELEMENT), element(ELEMENT, _, VALENCE), VALENCE <= 4.  % For higher valence elements, two double bonds are possible
 % Prohibit multiple triple bonds at children of root atom.
 :- multi_bond(I1, 3), multi_bond(I2, 3),
    parent(1, CHAIN_1, I1), parent(1, CHAIN_2, I2),
@@ -350,6 +386,11 @@ lt(1, 2) :- branching(1, BRANCHING_1), branching(2, BRANCHING_2), BRANCHING_1 <=
 lt(1, 2) :- part_eq(1, 2, 7+CHAIN),
             parent(1, CHAIN+1, I1'), parent(2, CHAIN, I2'),
             lt(I2', I1').
+% Below constraint is new
+lt(1, 2) :- not branching(2, _),
+            symbol(1, E1), symbol(2, E2),
+            element(E1, AN1, _), element(E2, AN2, _),
+            AN1 < AN2.
 
 :- parent(I, CHAIN, I1), parent(I, CHAIN+1, I2), lt(I1, I2).
 :- main_chain_len(MAIN_CHAIN_LEN), MAIN_CHAIN_LEN\2 = 0, lt(1, 2).
@@ -741,6 +782,7 @@ side_chain(I_BASE, SIDE_DEPTH) :- parent(I_BASE, CHAIN, I_SIDE), CHAIN > 0, (I_B
 
 #show branching/2.
 #show symbol/2.
+#show smiles_symbol/2.
 #show multi_bond/2.
 #show cycle_start/2.
 #show cycle_end/2.

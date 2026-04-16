@@ -30,7 +30,7 @@ num_isomorphic = 0
 try:
     i = 0
     for line in sys.stdin:
-        if "symbol" in line:
+        if "smiles_symbol" in line:
             i += 1
 
             model = dict()
@@ -51,7 +51,7 @@ try:
 
             def to_smiles(atom, reverse=False):
                 branching = next((x[1] for x in _model("branching") if x[0] == atom), 0)
-                element_symbol = next((x[1] for x in model["symbol"] if x[0] == atom), '_')
+                element_symbol = next((x[1] for x in model["smiles_symbol"] if x[0] == atom), '_')
                 bond_multiplicity = next(('=#'[x[1]-2] for x in _model("multi_bond") if x[0] == atom), '')
                 cycle_start_markers = sorted([x[1] for x in _model("cycle_start") if x[0] == atom])
                 cycle_end_markers = sorted([x[1] for x in _model("cycle_end") if x[0] == atom])
@@ -97,7 +97,7 @@ try:
             cyc = [f"cycle({cycle[0]},I={cycle[1]},I'={cycle[2]},L={cycle[2]-cycle[1]},L1={cycle[3]},L2={cycle[4]})" for cycle in _model("cycle")] \
                 + [f"cross_cycle({cycle[0]},I={cycle[1]},I'={cycle[2]},L1={cycle[3]},L2={cycle[4]})" for cycle in _model("cross_cycle")]
             smi_len = len(re.sub('\033[^m]*m', '', smi))
-            num_atoms = max((x[0] for x in model["symbol"]))
+            num_atoms = max((x[0] for x in model["smiles_symbol"]))
             print(f"{i: >3}: {smi}{' '*(num_atoms*3+5-smi_len)}{', '.join(cyc)}")
 
             if "edge" in model:

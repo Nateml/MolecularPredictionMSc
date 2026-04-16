@@ -495,6 +495,16 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
     ########################
     ##### DOUBLE BONDS #####
     ########################
+    60: {
+        "predicate": "has_s_o_double_bond",
+        "definition": """
+            has_s_o_double_bond :-
+                double_bond_between(I, J),
+                smiles_symbol(I, "S"),
+                symbol(J, "O").
+        """,
+        "domain": {0, 1}
+    },
     99: {
         "predicate": "has_c_c_double_bond",
         "definition": """
@@ -1972,7 +1982,7 @@ FEATURE_VECTOR_DEFINITIONS: Dict[int, ASPPredicate] = {
     
 }
 
-COUNT_KEYS = ['num_carbons', 'num_hydrogens', 'num_nitrogens', 'num_oxygens']
+COUNT_KEYS = ['num_carbons', 'num_hydrogens', 'num_nitrogens', 'num_oxygens', 'num_sulfurs', 'num_phosphorus']
 
 def KEYS():
     maccs_keys = set(MACCS_DEFINITIONS.keys())
