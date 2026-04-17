@@ -82,6 +82,8 @@ class MultitaskMLP(nn.Module):
         self.categorical_names = list(categorical_sizes.keys())
         self.num_binary = num_binary
         self.categorical_sizes = categorical_sizes
+        self.num_regression = num_regression
+        self.num_quantiles = num_quantiles
 
         # Shared backbone
         layers = []
@@ -118,9 +120,9 @@ class MultitaskMLP(nn.Module):
         }
 
 class MultiQuantileLoss(nn.Module):
-    def __init__(self, quantiles: list[float]):
+    def __init__(self, quantiles: list[float], device: torch.device = torch.device('cpu')):
         super().__init__()
-        self.register_buffer('quantiles', torch.tensor(quantiles).view(1, -1))
+        self.register_buffer('quantiles', torch.tensor(quantiles).view(1, -1).to(device))
         # shape: (1, num_quantiles)
 
     def forward(self, preds: torch.Tensor, target: torch.Tensor) -> torch.Tensor:

@@ -39,10 +39,12 @@ def compute_loss(
     categorical_weight: float = 1.0,
     quantile_weight: float = 1.0,
     pos_weight: Optional[torch.Tensor] = None,
+    return_components: bool = False
 ) -> torch.Tensor:
 
     # Binary loss (MACCS keys)
-    loss = binary_weight * binary_loss_fn(outputs["binary"], targets["binary"])
+    binary_loss = binary_loss_fn(outputs["binary"], targets["binary"])
+    loss = binary_weight * binary_loss
 
     # Categorical loss (atom counts), one CrossEntropyLoss per head
     ce_loss = 0.0
@@ -54,11 +56,13 @@ def compute_loss(
 
     # Quantile loss (element counts)
     quantile_loss = 0.0
-    for i, logits in enumerate(outputs["quantile"]):
-        quantile_loss += quantile_loss_fn(logits, targets["regression"][i])
-    quantile_loss /= len(outputs["quantile"])  # Average over heads
+    for i, preds in enumerate(outputs['quantile']):
+        quantile_loss += quantile_loss_fn(preds, targets['regression'][:, i])
 
     loss = loss + quantile_weight * quantile_loss
+
+    if return_components:
+        return loss, binary_loss, ce_loss, quantile_loss
 
     return loss
 
@@ -85,7 +89,7 @@ def train_one_epoch(
         targets = {
             "binary":      targets["binary"].to(device),
             "categorical": [t.to(device) for t in targets["categorical"]],
-            "regression":      targets["regression"].to(device),
+            "regression":      targets["continuous"].to(device),
         }
 
         optimizer.zero_grad()
@@ -117,18 +121,20 @@ def evaluate(
     total_loss = 0.0
     all_binary_probs,  all_binary_labels  = [], []
     all_cat_preds,     all_cat_labels     = [], []
-    all_quantile_preds, all_quantile_labels = [], []
+
+    quantile_loss = 0.0
 
     for spectra, targets in loader:
         spectra = spectra.to(device)
         targets = {
             "binary":      targets["binary"].to(device),
             "categorical": [t.to(device) for t in targets["categorical"]],
-            "regression":      targets["regression"].to(device),
+            "regression":      targets["continuous"].to(device),
         }
 
         outputs = model(spectra)
-        total_loss += compute_loss(outputs, targets, binary_loss_fn, categorical_loss_fn, quantile_loss_fn, pos_weight=pos_weight).item() * len(spectra)
+        losses = compute_loss(outputs, targets, binary_loss_fn, categorical_loss_fn, quantile_loss_fn, pos_weight=pos_weight, return_components=True)
+        total_loss += losses[0].item() * len(spectra)
 
         # Binary
         all_binary_probs.append(torch.sigmoid(outputs["binary"]).cpu())
@@ -141,10 +147,7 @@ def evaluate(
         all_cat_labels.append(batch_cat_labels)
 
         # Quantile regression
-        batch_quantile_preds = [logits.cpu() for logits in outputs["quantile"]]
-        batch_quantile_labels = [t.cpu() for t in targets["regression"]]
-        all_quantile_preds.append(batch_quantile_preds)
-        all_quantile_labels.append(batch_quantile_labels)
+        quantile_loss += losses[3].item() * len(spectra)
 
     # Binary accuracy
     all_binary_probs  = torch.cat(all_binary_probs)
@@ -159,13 +162,6 @@ def evaluate(
         labels = torch.cat([batch[i] for batch in all_cat_labels])
         cat_acc += (preds == labels).float().mean().item()
     cat_acc /= n_heads
-
-    # Quantile regression metrics
-    quantile_losses = []
-    for preds, labels in zip(all_quantile_preds, all_quantile_labels):
-        quantile_loss = quantile_loss_fn(torch.stack(preds), torch.stack(labels))
-        quantile_losses.append(quantile_loss.item())
-    quantile_loss = sum(quantile_losses) / len(quantile_losses)
 
     return {
         "loss":                total_loss / len(loader.dataset),
@@ -203,7 +199,7 @@ def train(
 
     binary_loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight, reduction='mean')
     categorical_loss_fn = nn.CrossEntropyLoss()
-    quantile_loss_fn = MultiQuantileLoss(quantiles=quantiles)  # 5th percentile, median, 95th percentile
+    quantile_loss_fn = MultiQuantileLoss(quantiles=quantiles, device=device)  # 5th percentile, median, 95th percentile
 
     # Checkpoint/resume support
     # If OUTPUT_PATH exists and contains epoch, resume from next epoch.
@@ -233,6 +229,8 @@ def train(
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "categorical_sizes": model.categorical_sizes,
+            "num_regression": model.num_regression,
+            "num_quantiles": model.num_quantiles,
             "maccs_length": model.num_binary
         }
         if checkpoint_path_latest:
@@ -246,6 +244,8 @@ def train(
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(),
                 "categorical_sizes": model.categorical_sizes,
+                "num_regression": model.num_regression,
+                "num_quantiles": model.num_quantiles,
                 "maccs_length": model.num_binary
             }
             torch.save(best_ckpt, output_path.with_suffix('.best.pt'))
