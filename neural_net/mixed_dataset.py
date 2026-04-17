@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, Subset
 
 
 # ---------------------------------------------------------------------------
@@ -442,6 +442,22 @@ class MixedRawFeatureDataset(Dataset):
         else:
             self._cont_std = None
  
+
+    @classmethod
+    def from_subset(cls, subset: Subset) -> "MixedRawFeatureDataset":
+        """
+        Create a new MixedRawFeatureDataset instance from a torch.utils.data.Subset of an existing MixedRawFeatureDataset.
+        Normalisation is reset so it can be computed fresh on the new split.
+        """
+        original = subset.dataset
+        # Build a new instance without calling __init__ (avoids re-reading files)
+        new = cls.__new__(cls)
+        new.__dict__ = {**original.__dict__}
+        new.records = [original.records[i] for i in subset.indices]
+        new._cont_mean = None
+        new._cont_std = None
+        return new
+
     # ------------------------------------------------------------------
     # Accessors
     # ------------------------------------------------------------------
@@ -461,6 +477,45 @@ class MixedRawFeatureDataset(Dataset):
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def normalise_continuous(self, mean: Optional[List[float]] = None, std: Optional[List[float]] = None) -> Tuple[List[float], List[float]]:
+        """
+        Compute mean and std from the continuous features in this dataset and store them for normalisation in __getitem__.
+            If mean/std are provided, use those instead of computing from the data. This allows val/test datasets to be normalised using training stats.
+
+        Returns the mean and std used for normalisation (either computed or provided).
+        """
+
+        if mean is not None or std is not None:
+            assert mean is not None and std is not None, "Both mean and std must be provided together"
+            self._cont_mean = torch.tensor(mean, dtype=torch.float32)
+            self._cont_std = torch.tensor(std, dtype=torch.float32)
+            return mean, std
+
+        all_cont = torch.stack([self[i][1]["continuous"] for i in range(len(self))])
+        # shape: (n_records, n_continuous)
+
+        mean_t = all_cont.mean(dim=0)
+        std_t  = all_cont.std(dim=0).clamp(min=1e-8)
+
+        self._cont_mean = mean_t
+        self._cont_std  = std_t
+
+        return mean_t.tolist(), std_t.tolist()
+
+    def set_normalisation(self, mean: List[float], std: List[float]) -> None:
+        """Set the normalisation parameters for this dataset, to be applied in __getitem__.
+
+        Should be called on val/test datasets after computing normalisation from the training dataset.
+        """
+        n_cont = len(self.continuous_feature_order)
+        if len(mean) != n_cont or len(std) != n_cont:
+            raise ValueError(
+                f"Mean/std length {len(mean)} / {len(std)} does not match "
+                f"n_continuous {n_cont} declared in schema"
+            )
+        self._cont_mean = torch.tensor(mean, dtype=torch.float32)
+        self._cont_std  = torch.tensor(std, dtype=torch.float32)
  
     def _spectrum_to_dense(self, spectrum: str) -> torch.Tensor:
         vec = torch.zeros(self.spectrum_len, dtype=torch.float32)
