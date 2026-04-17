@@ -484,6 +484,33 @@ HELPER_PREDICATES: Dict[str, str] = {
             N = #count { I : smiles_symbol(I, "Si") }.
     """,
 
+    "ch2_atom": """
+        ch2_atom(I) :-
+            symbol(I, "C"),
+            free_bonds(I, 2).
+    """,
+
+    "ch3_atom": """
+            ch3_atom(I) :-
+                symbol(I, "C"),
+                free_bonds(I, H),
+                H >= 3.
+        """,
+
+    "qh_atom": """
+        qh_atom(I) :-
+            heteroatom(I),
+            free_bonds(I, H),
+            H >= 1.
+    """,
+
+    "ch2_or_ch3_atom": """
+    ch2_or_ch3_atom(I) :-
+        symbol(I, "C"),
+        free_bonds(I, H),
+        H >= 2.
+    """,
+
 ##TODO: future elements need adding
     "exact_mass_da": """
         exact_mass_da(M) :-
@@ -569,12 +596,12 @@ HELPER_PREDICATES: Dict[str, str] = {
 
     "p_valence_3_count": """
         p_valence_3_count(N) :-
-            N = #count { I : symbol(I, "P"), free_bonds(I, 0) }.
+            N = #count { I : smiles_symbol(I, "P"), free_bonds(I, 0) }.
     """,
 
     "p_valence_5plus_count": """
         p_valence_5plus_count(N) :-
-            N = #count { I : symbol(I, "P"), free_bonds(I, F), F < 0 }.
+            N = #count { I : smiles_symbol(I, "P"), free_bonds(I, F), F < 0 }.
     """,
 
     "s_valence_2_count": """
@@ -798,6 +825,51 @@ HELPER_PREDICATES: Dict[str, str] = {
             }.
     """,
 
+    "ring_size_7_count": """
+    ring_size_7_count(N) :-
+        N = #count {
+            CYCLE :
+                cycle_start(I1, CYCLE),
+                cycle_end(I2, CYCLE),
+                I2 - I1 + 1 = 7
+        }.
+    """,
+
+    "ring_size_8plus_count": """
+        ring_size_8plus_count(N) :-
+            N = #count {
+                CYCLE :
+                    cycle_start(I1, CYCLE),
+                    cycle_end(I2, CYCLE),
+                    I2 - I1 + 1 >= 8
+            }.
+    """,
+    
+    "nonring_o_a_a_atom": """
+        nonring_o_a_a_atom(I) :-
+            symbol(I, "O"),
+            atom_degree(I, 2),
+            not ring_atom(I),
+            any_bond_between(I, J),
+            any_bond_between(I, K),
+            J != K,
+            J != I, K != I,
+            not ring_atom(J),
+            not ring_atom(K).
+    """,
+
+    "nonring_ch2_a_a_atom": """
+        nonring_ch2_a_a_atom(I) :-
+            ch2_atom(I),
+            atom_degree(I, 2),
+            not ring_atom(I),
+            any_bond_between(I, J),
+            any_bond_between(I, K),
+            J != K,
+            J != I, K != I,
+            not ring_atom(J),
+            not ring_atom(K).
+    """,
 
     "heavy_atom_count": """
         heavy_atom_count(N) :-
@@ -1315,9 +1387,6 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
             has_s_double_bond :-
                 double_bond_between(I, J),
                 smiles_symbol(I, "S").
-            has_s_double_bond :-
-                double_bond_between(I, J),
-                smiles_symbol(J, "S").
         """,
         "domain": {0, 1}
     },
@@ -1764,6 +1833,1007 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
         """,
         "domain": {0, 1}
     },
+    ##############################
+    ##### BRANCHED CENTERS 2 #####
+    ##############################
+    15: {
+        "predicate": "has_oc_oo",
+        "definition": """
+            has_oc_oo :-
+                any_bond_between(I, J),
+                any_bond_between(J, K),
+                any_bond_between(J, L),
+                symbol(I, "O"),
+                symbol(J, "C"),
+                symbol(K, "O"),
+                symbol(L, "O"),
+                I != J, J != K, J != L, I != K, I != L, K != L.
+        """,
+        "domain": {0, 1}
+    },
+    25: {
+        "predicate": "has_nc_nn",
+        "definition": """
+            has_nc_nn :-
+                any_bond_between(I, J),
+                any_bond_between(J, K),
+                any_bond_between(J, L),
+                symbol(I, "N"),
+                symbol(J, "C"),
+                symbol(K, "N"),
+                symbol(L, "N"),
+                I != J, J != K, J != L, I != K, I != L, K != L.
+        """,
+        "domain": {0, 1}
+    },
+    39: {
+        "predicate": "has_os_oo",
+        "definition": """
+            has_os_oo :-
+                any_bond_between(I, J),
+                any_bond_between(J, K),
+                any_bond_between(J, L),
+                symbol(I, "O"),
+                smiles_symbol(J, "S"),
+                symbol(K, "O"),
+                symbol(L, "O"),
+                I != J, J != K, J != L, I != K, I != L, K != L.
+        """,
+        "domain": {0, 1}
+    },
+    48: {
+        "predicate": "has_q_ooo",
+        "definition": """
+            has_q_ooo :-
+                any_bond_between(I, J),
+                any_bond_between(J, K),
+                any_bond_between(J, L),
+                symbol(I, "O"),
+                heteroatom(J),
+                symbol(K, "O"),
+                symbol(L, "O"),
+                I != J, J != K, J != L, I != K, I != L, K != L.
+        """,
+        "domain": {0, 1}
+    },
+    56: {
+        "predicate": "has_on_oc",
+        "definition": """
+            has_on_oc :-
+                any_bond_between(I, J),
+                any_bond_between(J, K),
+                any_bond_between(J, L),
+                symbol(I, "O"),
+                symbol(J, "N"),
+                symbol(K, "O"),
+                symbol(L, "C"),
+                I != J, J != K, J != L, I != K, I != L, K != L.
+        """,
+        "domain": {0, 1}
+    },
+    61: {
+        "predicate": "has_s_3bonds",
+        "definition": """
+            has_s_3bonds :-
+                smiles_symbol(J, "S"),
+                atom_degree(J, D),
+                D >= 3.
+        """,
+        "domain": {0, 1}
+    },
+    66: {
+        "predicate": "has_cc_cca",
+        "definition": """
+            has_cc_cca :-
+                any_bond_between(I, J),
+                any_bond_between(J, K),
+                any_bond_between(J, L),
+                any_bond_between(J, M),
+                symbol(I, "C"),
+                symbol(J, "C"),
+                symbol(K, "C"),
+                symbol(L, "C"),
+                I != J, J != K, J != L, J != M,
+                I != K, I != L, I != M,
+                K != L, K != M, L != M.
+        """,
+        "domain": {0, 1}
+    },
+    148: {
+        "predicate": "has_aq_aa",
+        "definition": """
+            has_aq_aa :-
+                any_bond_between(I, J),
+                any_bond_between(J, K),
+                any_bond_between(J, L),
+                heteroatom(J),
+                I != J, J != K, J != L, I != K, I != L, K != L.
+        """,
+        "domain": {0, 1}
+    },
+    ##############################
+    ##### H-BEARING CHAINS   #####
+    ##############################
+    43: {
+        "predicate": "has_qh_a_qh",
+        "definition": """
+            has_qh_a_qh :-
+                any_bond_between(I, J),
+                any_bond_between(J, K),
+                heteroatom(I),
+                heteroatom(K),
+                free_bonds(I, FI), FI >= 1,
+                free_bonds(K, FK), FK >= 1,
+                I != J, J != K, I < K.
+        """,
+        "domain": {0, 1}
+    },
+    54: {
+        "predicate": "has_qh_aa_qh",
+        "definition": """
+            has_qh_aa_qh :-
+                any_bond_between(I, J),
+                any_bond_between(J, K),
+                any_bond_between(K, L),
+                heteroatom(I),
+                heteroatom(L),
+                free_bonds(I, FI), FI >= 1,
+                free_bonds(L, FL), FL >= 1,
+                I != J, J != K, K != L, I != K, J != L, I < L.
+        """,
+        "domain": {0, 1}
+    },
+    68: {
+        "predicate": "has_qh_qh",
+        "definition": """
+            has_qh_qh :-
+                any_bond_between(I, J),
+                heteroatom(I),
+                heteroatom(J),
+                free_bonds(I, FI), FI >= 1,
+                free_bonds(J, FJ), FJ >= 1,
+                I < J.
+        """,
+        "domain": {0, 1}
+    },
+    69: {
+        "predicate": "has_qq_h",
+        "definition": """
+            has_qq_h :-
+                any_bond_between(I, J),
+                heteroatom(I),
+                heteroatom(J),
+                free_bonds(J, FJ), FJ >= 1.
+        """,
+        "domain": {0, 1}
+    },
+    82: {
+        "predicate": "has_ach2_qh",
+        "definition": """
+            has_ach2_qh :-
+                any_bond_between(I, J),
+                any_bond_between(J, K),
+                symbol(J, "C"),
+                free_bonds(J, 2),
+                heteroatom(K),
+                free_bonds(K, FK), FK >= 1,
+                I != J, J != K, I != K.
+        """,
+        "domain": {0, 1}
+    },
+    ##############################
+    ##### CH3 / C=C PATTERNS #####
+    ##############################
+    21: {
+        "predicate": "has_c_eq_c_qq",
+        "definition": """
+            has_c_eq_c_qq :-
+                double_bond_between(I, J),
+                any_bond_between(J, K),
+                any_bond_between(J, L),
+                symbol(I, "C"),
+                symbol(J, "C"),
+                heteroatom(K),
+                heteroatom(L),
+                I != J, J != K, J != L, I != K, I != L, K != L.
+        """,
+        "domain": {0, 1}
+    },
+    34: {
+        "predicate": "has_ch2_eq_a",
+        "definition": """
+            has_ch2_eq_a :-
+                double_bond_between(I, J),
+                symbol(I, "C"),
+                free_bonds(I, 2),
+                I != J.
+        """,
+        "domain": {0, 1}
+    },
+    74: {
+        "predicate": "has_ch3_a_ch3",
+        "definition": """
+            has_ch3_a_ch3 :-
+                any_bond_between(I, J),
+                any_bond_between(J, K),
+                symbol(I, "C"), free_bonds(I, 3),
+                symbol(K, "C"), free_bonds(K, 3),
+                I != J, J != K, I < K.
+        """,
+        "domain": {0, 1}
+    },
+    76: {
+        "predicate": "has_c_eq_c_aa",
+        "definition": """
+            has_c_eq_c_aa :-
+                double_bond_between(I, J),
+                any_bond_between(J, K),
+                any_bond_between(J, L),
+                symbol(I, "C"),
+                symbol(J, "C"),
+                I != J, J != K, J != L, I != K, I != L, K != L.
+        """,
+        "domain": {0, 1}
+    },
+    ##############################
+    ##### COUNT > N (cont.)  #####
+    ##############################
+    130: {
+        "predicate": "has_qq_gt1",
+        "definition": """
+            has_qq_gt1 :- #count{ I, J : any_bond_between(I, J), heteroatom(I), heteroatom(J), I < J } >= 2.
+        """,
+        "domain": {0, 1}
+    },
+    131: {
+        "predicate": "has_qh_gt1",
+        "definition": """
+            has_qh_gt1 :- #count{ I : heteroatom(I), free_bonds(I, F), F >= 1 } >= 2.
+        """,
+        "domain": {0, 1}
+    },
+    136: {
+        "predicate": "has_o_eq_a_gt1",
+        "definition": """
+            has_o_eq_a_gt1 :- #count{ I : symbol(I, "O"), double_bond_between(I, J) } >= 2.
+        """,
+        "domain": {0, 1}
+    },
+    140: {
+        "predicate": "has_oxygen_gt3",
+        "definition": """
+            has_oxygen_gt3 :- #count{ I : symbol(I, "O") } >= 4.
+        """,
+        "domain": {0, 1}
+    },
+    141: {
+        "predicate": "has_ch3_gt2",
+        "definition": """
+            has_ch3_gt2 :- #count{ I : symbol(I, "C"), free_bonds(I, 3) } >= 3.
+        """,
+        "domain": {0, 1}
+    },
+    ##############################
+    30: {
+    "predicate": "has_cq_cc_a",
+    "definition": """
+        has_cq_cc_a :-
+            any_bond_between(I, J),
+            any_bond_between(J, K),
+            any_bond_between(J, L),
+            any_bond_between(J, M),
+            symbol(I, "C"),
+            heteroatom(J),
+            symbol(K, "C"),
+            symbol(L, "C"),
+            J != I, J != K, J != L, J != M,
+            I != K, I != L, I != M,
+            K != L, K != M, L != M.
+    """,
+    "domain": {0, 1}
+    },
+
+    53: {
+        "predicate": "has_qh_aaa_qh",
+        "definition": """
+            has_qh_aaa_qh :-
+                any_bond_between(I, J),
+                any_bond_between(J, K),
+                any_bond_between(K, L),
+                any_bond_between(L, M),
+                qh_atom(I),
+                qh_atom(M),
+                I != J, J != K, K != L, L != M,
+                I != K, I != L, I != M,
+                J != L, J != M,
+                K != M,
+                I < M.
+        """,
+        "domain": {0, 1}
+    },
+
+    81: {
+        "predicate": "has_s_a_aa",
+        "definition": """
+            has_s_a_aa :-
+                any_bond_between(I, J),
+                any_bond_between(J, K),
+                any_bond_between(J, L),
+                smiles_symbol(I, "S"),
+                I != J, J != K, J != L,
+                I != K, I != L, K != L.
+        """,
+        "domain": {0, 1}
+    },
+
+    86: {
+        "predicate": "has_ch23_q_ch23",
+        "definition": """
+            has_ch23_q_ch23 :-
+                any_bond_between(I, J),
+                any_bond_between(J, K),
+                ch2_or_ch3_atom(I),
+                heteroatom(J),
+                ch2_or_ch3_atom(K),
+                I != J, J != K,
+                I < K.
+        """,
+        "domain": {0, 1}
+    },
+
+    104: {
+        "predicate": "has_qh_a_ch2_a",
+        "definition": """
+            has_qh_a_ch2_a :-
+                any_bond_between(I, J),
+                any_bond_between(J, K),
+                any_bond_between(K, L),
+                qh_atom(I),
+                ch2_atom(K),
+                I != J, J != K, K != L,
+                I != K, I != L, J != L.
+        """,
+        "domain": {0, 1}
+    },
+
+    106: {
+        "predicate": "has_qa_q_q",
+        "definition": """
+            has_qa_q_q :-
+                any_bond_between(I, J),
+                any_bond_between(J, K),
+                any_bond_between(J, L),
+                heteroatom(I),
+                heteroatom(K),
+                heteroatom(L),
+                I != J, J != K, J != L,
+                I != K, I != L, K != L.
+        """,
+        "domain": {0, 1}
+    },
+
+    111: {
+        "predicate": "has_n_a_ch2_a",
+        "definition": """
+            has_n_a_ch2_a :-
+                any_bond_between(I, J),
+                any_bond_between(J, K),
+                any_bond_between(K, L),
+                symbol(I, "N"),
+                ch2_atom(K),
+                I != J, J != K, K != L,
+                I != K, I != L, J != L.
+        """,
+        "domain": {0, 1}
+    },
+
+    112: {
+        "predicate": "has_aa_aa_a",
+        "definition": """
+            has_aa_aa_a :-
+                any_bond_between(I, J),
+                any_bond_between(J, K),
+                any_bond_between(J, L),
+                any_bond_between(J, M),
+                I != J, J != K, J != L, J != M,
+                I != K, I != L, I != M,
+                K != L, K != M, L != M.
+        """,
+        "domain": {0, 1}
+    },
+
+    114: {
+        "predicate": "has_ch3_ch2_a",
+        "definition": """
+            has_ch3_ch2_a :-
+                any_bond_between(I, J),
+                any_bond_between(J, K),
+                ch3_atom(I),
+                ch2_atom(J),
+                I != J, J != K, I != K.
+        """,
+        "domain": {0, 1}
+    },
+
+    115: {
+        "predicate": "has_ch3_a_ch2_a",
+        "definition": """
+            has_ch3_a_ch2_a :-
+                any_bond_between(I, J),
+                any_bond_between(J, K),
+                any_bond_between(K, L),
+                ch3_atom(I),
+                ch2_atom(K),
+                I != J, J != K, K != L,
+                I != K, I != L, J != L.
+        """,
+        "domain": {0, 1}
+    },
+
+    132: {
+        "predicate": "has_o_a_ch2_a",
+        "definition": """
+            has_o_a_ch2_a :-
+                any_bond_between(I, J),
+                any_bond_between(J, K),
+                any_bond_between(K, L),
+                symbol(I, "O"),
+                ch2_atom(K),
+                I != J, J != K, K != L,
+                I != K, I != L, J != L.
+        """,
+        "domain": {0, 1}
+    },
+
+    156: {
+        "predicate": "has_n_a_aa",
+        "definition": """
+            has_n_a_aa :-
+                any_bond_between(I, J),
+                any_bond_between(J, K),
+                any_bond_between(J, L),
+                symbol(I, "N"),
+                I != J, J != K, J != L,
+                I != K, I != L, K != L.
+        """,
+        "domain": {0, 1}
+    },
+
+    108: {
+        "predicate": "has_ch3_aaa_ch2_a",
+        "definition": """
+            has_ch3_aaa_ch2_a :-
+                any_bond_between(I, J),
+                any_bond_between(J, K),
+                any_bond_between(K, L),
+                any_bond_between(L, M),
+                any_bond_between(M, N),
+                ch3_atom(I),
+                ch2_atom(M),
+                I != J, J != K, K != L, L != M, M != N,
+                I != K, I != L, I != M, I != N,
+                J != L, J != M, J != N,
+                K != M, K != N,
+                L != N.
+        """,
+        "domain": {0, 1}
+    },
+
+    116: {
+        "predicate": "has_ch3_aa_ch2_a",
+        "definition": """
+            has_ch3_aa_ch2_a :-
+                any_bond_between(I, J),
+                any_bond_between(J, K),
+                any_bond_between(K, L),
+                any_bond_between(L, M),
+                ch3_atom(I),
+                ch2_atom(L),
+                I != J, J != K, K != L, L != M,
+                I != K, I != L, I != M,
+                J != L, J != M,
+                K != M.
+        """,
+        "domain": {0, 1}
+    },
+
+    128: {
+        "predicate": "has_a_ch2_aaa_ch2_a",
+        "definition": """
+            has_a_ch2_aaa_ch2_a :-
+                any_bond_between(I, J),
+                any_bond_between(J, K),
+                any_bond_between(K, L),
+                any_bond_between(L, M),
+                any_bond_between(M, N),
+                any_bond_between(N, O),
+                ch2_atom(J),
+                ch2_atom(N),
+                I != J, J != K, K != L, L != M, M != N, N != O,
+                I != K, I != L, I != M, I != N, I != O,
+                J != L, J != M, J != N, J != O,
+                K != M, K != N, K != O,
+                L != N, L != O,
+                M != O.
+        """,
+        "domain": {0, 1}
+    },
+
+    129: {
+        "predicate": "has_a_ch2_aa_ch2_a",
+        "definition": """
+            has_a_ch2_aa_ch2_a :-
+                any_bond_between(I, J),
+                any_bond_between(J, K),
+                any_bond_between(K, L),
+                any_bond_between(L, M),
+                any_bond_between(M, N),
+                ch2_atom(J),
+                ch2_atom(M),
+                I != J, J != K, K != L, L != M, M != N,
+                I != K, I != L, I != M, I != N,
+                J != L, J != M, J != N,
+                K != M, K != N,
+                L != N.
+        """,
+        "domain": {0, 1}
+    },
+
+    147: {
+        "predicate": "has_a_ch2_ch2_a",
+        "definition": """
+            has_a_ch2_ch2_a :-
+                any_bond_between(I, J),
+                any_bond_between(J, K),
+                any_bond_between(K, L),
+                ch2_atom(J),
+                ch2_atom(K),
+                I != J, J != K, K != L,
+                I != K, I != L, J != L.
+        """,
+        "domain": {0, 1}
+    },
+
+    11: {
+        "predicate": "has_4m_ring",
+        "definition": """
+            has_4m_ring :-
+                ring_size_4_count(N),
+                N > 0.
+        """,
+        "domain": {0, 1}
+    },
+
+    19: {
+        "predicate": "has_7m_ring",
+        "definition": """
+            has_7m_ring :-
+                ring_size_7_count(N),
+                N > 0.
+        """,
+        "domain": {0, 1}
+    },
+
+    22: {
+        "predicate": "has_3m_ring",
+        "definition": """
+            has_3m_ring :-
+                ring_size_3_count(N),
+                N > 0.
+        """,
+        "domain": {0, 1}
+    },
+
+    96: {
+        "predicate": "has_5m_ring",
+        "definition": """
+            has_5m_ring :-
+                ring_size_5_count(N),
+                N > 0.
+        """,
+        "domain": {0, 1}
+    },
+
+    101: {
+        "predicate": "has_8m_or_larger_ring",
+        "definition": """
+            has_8m_or_larger_ring :-
+                ring_size_8plus_count(N),
+                N > 0.
+        """,
+        "domain": {0, 1}
+    },
+
+    126: {
+        "predicate": "has_a_nonring_o_a",
+        "definition": """
+            has_a_nonring_o_a :-
+                nonring_o_a_a_atom(_).
+        """,
+        "domain": {0, 1}
+    },
+
+    155: {
+        "predicate": "has_a_nonring_ch2_a",
+        "definition": """
+            has_a_nonring_ch2_a :-
+                nonring_ch2_a_a_atom(_).
+        """,
+        "domain": {0, 1}
+    },
+
+    145: {
+        "predicate": "has_6m_ring_gt1",
+        "definition": """
+            has_6m_ring_gt1 :-
+                ring_size_6_count(N),
+                N > 1.
+        """,
+        "domain": {0, 1}
+    },
+
+    163: {
+        "predicate": "has_6m_ring",
+        "definition": """
+            has_6m_ring :-
+                ring_size_6_count(N),
+                N > 0.
+        """,
+        "domain": {0, 1}
+    },
+
+    2: {
+        "predicate": "has_element_104",
+        "definition": """
+            has_element_104 :-
+                smiles_symbol(_, "Rf").
+        """,
+        "domain": {0, 1}
+    },
+
+    3: {
+        "predicate": "has_group_iva_va_via_rows4to6",
+        "definition": """
+            has_group_iva_va_via_rows4to6 :-
+                smiles_symbol(_, "Ge").
+            has_group_iva_va_via_rows4to6 :-
+                smiles_symbol(_, "As").
+            has_group_iva_va_via_rows4to6 :-
+                smiles_symbol(_, "Se").
+            has_group_iva_va_via_rows4to6 :-
+                smiles_symbol(_, "Sn").
+            has_group_iva_va_via_rows4to6 :-
+                smiles_symbol(_, "Sb").
+            has_group_iva_va_via_rows4to6 :-
+                smiles_symbol(_, "Te").
+            has_group_iva_va_via_rows4to6 :-
+                smiles_symbol(_, "Pb").
+            has_group_iva_va_via_rows4to6 :-
+                smiles_symbol(_, "Bi").
+            has_group_iva_va_via_rows4to6 :-
+                smiles_symbol(_, "Po").
+        """,
+        "domain": {0, 1}
+    },
+
+    4: {
+        "predicate": "has_actinide",
+        "definition": """
+            has_actinide :- smiles_symbol(_, "Ac").
+            has_actinide :- smiles_symbol(_, "Th").
+            has_actinide :- smiles_symbol(_, "Pa").
+            has_actinide :- smiles_symbol(_, "U").
+            has_actinide :- smiles_symbol(_, "Np").
+            has_actinide :- smiles_symbol(_, "Pu").
+            has_actinide :- smiles_symbol(_, "Am").
+            has_actinide :- smiles_symbol(_, "Cm").
+            has_actinide :- smiles_symbol(_, "Bk").
+            has_actinide :- smiles_symbol(_, "Cf").
+            has_actinide :- smiles_symbol(_, "Es").
+            has_actinide :- smiles_symbol(_, "Fm").
+            has_actinide :- smiles_symbol(_, "Md").
+            has_actinide :- smiles_symbol(_, "No").
+            has_actinide :- smiles_symbol(_, "Lr").
+        """,
+        "domain": {0, 1}
+    },
+
+    5: {
+        "predicate": "has_group_iiib_ivb",
+        "definition": """
+            has_group_iiib_ivb :- smiles_symbol(_, "Sc").
+            has_group_iiib_ivb :- smiles_symbol(_, "Ti").
+            has_group_iiib_ivb :- smiles_symbol(_, "Y").
+            has_group_iiib_ivb :- smiles_symbol(_, "Zr").
+            has_group_iiib_ivb :- smiles_symbol(_, "Hf").
+        """,
+        "domain": {0, 1}
+    },
+
+    6: {
+        "predicate": "has_lanthanide",
+        "definition": """
+            has_lanthanide :- smiles_symbol(_, "La").
+            has_lanthanide :- smiles_symbol(_, "Ce").
+            has_lanthanide :- smiles_symbol(_, "Pr").
+            has_lanthanide :- smiles_symbol(_, "Nd").
+            has_lanthanide :- smiles_symbol(_, "Pm").
+            has_lanthanide :- smiles_symbol(_, "Sm").
+            has_lanthanide :- smiles_symbol(_, "Eu").
+            has_lanthanide :- smiles_symbol(_, "Gd").
+            has_lanthanide :- smiles_symbol(_, "Tb").
+            has_lanthanide :- smiles_symbol(_, "Dy").
+            has_lanthanide :- smiles_symbol(_, "Ho").
+            has_lanthanide :- smiles_symbol(_, "Er").
+            has_lanthanide :- smiles_symbol(_, "Tm").
+            has_lanthanide :- smiles_symbol(_, "Yb").
+            has_lanthanide :- smiles_symbol(_, "Lu").
+        """,
+        "domain": {0, 1}
+    },
+
+    7: {
+        "predicate": "has_group_vb_vib_viib",
+        "definition": """
+            has_group_vb_vib_viib :- smiles_symbol(_, "V").
+            has_group_vb_vib_viib :- smiles_symbol(_, "Cr").
+            has_group_vb_vib_viib :- smiles_symbol(_, "Mn").
+            has_group_vb_vib_viib :- smiles_symbol(_, "Nb").
+            has_group_vb_vib_viib :- smiles_symbol(_, "Mo").
+            has_group_vb_vib_viib :- smiles_symbol(_, "Tc").
+            has_group_vb_vib_viib :- smiles_symbol(_, "Ta").
+            has_group_vb_vib_viib :- smiles_symbol(_, "W").
+            has_group_vb_vib_viib :- smiles_symbol(_, "Re").
+        """,
+        "domain": {0, 1}
+    },
+
+    9: {
+        "predicate": "has_group_viii",
+        "definition": """
+            has_group_viii :- smiles_symbol(_, "Fe").
+            has_group_viii :- smiles_symbol(_, "Co").
+            has_group_viii :- smiles_symbol(_, "Ni").
+            has_group_viii :- smiles_symbol(_, "Ru").
+            has_group_viii :- smiles_symbol(_, "Rh").
+            has_group_viii :- smiles_symbol(_, "Pd").
+            has_group_viii :- smiles_symbol(_, "Os").
+            has_group_viii :- smiles_symbol(_, "Ir").
+            has_group_viii :- smiles_symbol(_, "Pt").
+        """,
+        "domain": {0, 1}
+    },
+
+    12: {
+        "predicate": "has_group_ib_iib",
+        "definition": """
+            has_group_ib_iib :- smiles_symbol(_, "Cu").
+            has_group_ib_iib :- smiles_symbol(_, "Zn").
+            has_group_ib_iib :- smiles_symbol(_, "Ag").
+            has_group_ib_iib :- smiles_symbol(_, "Cd").
+            has_group_ib_iib :- smiles_symbol(_, "Au").
+            has_group_ib_iib :- smiles_symbol(_, "Hg").
+        """,
+        "domain": {0, 1}
+    },
+
+    18: {
+        "predicate": "has_group_iiia",
+        "definition": """
+            has_group_iiia :- smiles_symbol(_, "B").
+            has_group_iiia :- smiles_symbol(_, "Al").
+            has_group_iiia :- smiles_symbol(_, "Ga").
+            has_group_iiia :- smiles_symbol(_, "In").
+            has_group_iiia :- smiles_symbol(_, "Tl").
+        """,
+        "domain": {0, 1}
+    },
+
+    20: {
+        "predicate": "has_silicon",
+        "definition": """
+            has_silicon :- smiles_symbol(_, "Si").
+        """,
+        "domain": {0, 1}
+    },
+
+    27: {
+        "predicate": "has_iodine",
+        "definition": """
+            has_iodine :- smiles_symbol(_, "I").
+        """,
+        "domain": {0, 1}
+    },
+
+    31: {
+        "predicate": "has_q_x",
+        "definition": """
+            has_q_x :-
+                any_bond_between(I, J),
+                heteroatom(I),
+                smiles_symbol(J, "F").
+            has_q_x :-
+                any_bond_between(I, J),
+                heteroatom(I),
+                smiles_symbol(J, "Cl").
+            has_q_x :-
+                any_bond_between(I, J),
+                heteroatom(I),
+                smiles_symbol(J, "Br").
+            has_q_x :-
+                any_bond_between(I, J),
+                heteroatom(I),
+                smiles_symbol(J, "I").
+        """,
+        "domain": {0, 1}
+    },
+
+    35: {
+        "predicate": "has_alkali_metal",
+        "definition": """
+            has_alkali_metal :- smiles_symbol(_, "Li").
+            has_alkali_metal :- smiles_symbol(_, "Na").
+            has_alkali_metal :- smiles_symbol(_, "K").
+            has_alkali_metal :- smiles_symbol(_, "Rb").
+            has_alkali_metal :- smiles_symbol(_, "Cs").
+            has_alkali_metal :- smiles_symbol(_, "Fr").
+        """,
+        "domain": {0, 1}
+    },
+
+    42: {
+        "predicate": "has_fluorine",
+        "definition": """
+            has_fluorine :- smiles_symbol(_, "F").
+        """,
+        "domain": {0, 1}
+    },
+
+    44: {
+        "predicate": "has_other_element",
+        "definition": """
+            has_other_element :-
+                smiles_symbol(_, E),
+                E != "H",
+                E != "C",
+                E != "N",
+                E != "O",
+                E != "F",
+                E != "Si",
+                E != "P",
+                E != "S",
+                E != "Cl",
+                E != "Br",
+                E != "I".
+        """,
+        "domain": {0, 1}
+    },
+
+    46: {
+        "predicate": "has_bromine",
+        "definition": """
+            has_bromine :- smiles_symbol(_, "Br").
+        """,
+        "domain": {0, 1}
+    },
+
+    134: {
+        "predicate": "has_halogen",
+        "definition": """
+            has_halogen :- smiles_symbol(_, "F").
+            has_halogen :- smiles_symbol(_, "Cl").
+            has_halogen :- smiles_symbol(_, "Br").
+            has_halogen :- smiles_symbol(_, "I").
+        """,
+        "domain": {0, 1}
+    },
+
+    90: {
+        "predicate": "has_qh_a_a_ch2_a",
+        "definition": """
+            has_qh_a_a_ch2_a :-
+                heavy_neighbor(I, J),
+                heavy_neighbor(J, K),
+                heavy_neighbor(K, L),
+                heavy_neighbor(L, M),
+                qh_atom(I),
+                ch2_atom(L),
+                I != J, J != K, K != L, L != M,
+                I != K, I != L, I != M,
+                J != L, J != M,
+                K != M.
+        """,
+        "domain": {0, 1}
+    },
+
+    91: {
+        "predicate": "has_qh_a_a_a_ch2_a",
+        "definition": """
+            has_qh_a_a_a_ch2_a :-
+                heavy_neighbor(I, J),
+                heavy_neighbor(J, K),
+                heavy_neighbor(K, L),
+                heavy_neighbor(L, M),
+                heavy_neighbor(M, N),
+                qh_atom(I),
+                ch2_atom(M),
+                I != J, J != K, K != L, L != M, M != N,
+                I != K, I != L, I != M, I != N,
+                J != L, J != M, J != N,
+                K != M, K != N,
+                L != N.
+        """,
+        "domain": {0, 1}
+    },
+
+    103: {
+        "predicate": "has_chlorine",
+        "definition": """
+            has_chlorine :-
+                smiles_symbol(_, "Cl").
+        """,
+        "domain": {0, 1}
+    },
+
+    107: {
+        "predicate": "has_x_a_aa",
+        "definition": """
+            halogen_atom(I) :-
+                smiles_symbol(I, "F").
+            halogen_atom(I) :-
+                smiles_symbol(I, "Cl").
+            halogen_atom(I) :-
+                smiles_symbol(I, "Br").
+            halogen_atom(I) :-
+                smiles_symbol(I, "I").
+
+            has_x_a_aa :-
+                heavy_neighbor(I, J),
+                heavy_neighbor(J, K),
+                heavy_neighbor(J, L),
+                halogen_atom(I),
+                I != J, J != K, J != L,
+                I != K, I != L, K != L.
+        """,
+        "domain": {0, 1}
+    },
+
+    118: {
+        "predicate": "has_a_ch2_ch2_a_gt1",
+        "definition": """
+            a_ch2_ch2_a_pair(I, J, K, L) :-
+                heavy_neighbor(I, J),
+                heavy_neighbor(J, K),
+                heavy_neighbor(K, L),
+                ch2_atom(J),
+                ch2_atom(K),
+                I != J, J != K, K != L,
+                I != K, I != L, J != L,
+                J < K.
+
+            has_a_ch2_ch2_a_gt1 :-
+                2 <= #count { I, J, K, L : a_ch2_ch2_a_pair(I, J, K, L) }.
+        """,
+        "domain": {0, 1}
+    },
+
+    138: {
+        "predicate": "has_q_ch2_a_gt1",
+        "definition": """
+            q_ch2_a_match(I, J, K) :-
+                any_bond_between(I, J),
+                any_bond_between(J, K),
+                heteroatom(I),
+                symbol(J, "C"),
+                free_bonds(J, 2),
+                I != J, J != K, I != K.
+
+            has_q_ch2_a_gt1 :-
+                2 <= #count { I, J, K : q_ch2_a_match(I, J, K) }.
+        """,
+        "domain": {0, 1}
+    },
+
 }
 
 # Feature-vector translations grounded in predicates emitted by
