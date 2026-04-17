@@ -487,13 +487,13 @@ HELPER_PREDICATES: Dict[str, str] = {
 ##TODO: future elements need adding
     "exact_mass_da": """
         exact_mass_da(M) :-
-            M = 12.0 * c + 1.007825 * h + 14.003074 * n + 15.994915 * o.
+            M = 12 * c + 1 * h + 14 * n + 16 * o.
     """,
 
     ##TODO: currently only C/H/N/O are exposed; add P/S/halogens/etc when available.
     "molecular_weight_da": """
         molecular_weight_da(M) :-
-            M = 12.011 * c + 1.008 * h + 14.007 * n + 15.999 * o.
+            M = 12 * c + 1 * h + 14 * n + 16 * o.
     """,
 
     # NOTE: current smiles.lp exposes neutral N with base valence 3.
