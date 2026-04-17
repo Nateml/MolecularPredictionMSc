@@ -17,7 +17,7 @@ def min_main_chain_len(n):
     )
 
 
-def solve(asp_code: list[str], atom_counts: int, output_list_of_smiles: bool = False) -> typing.Tuple[str, int]:
+def solve(asp_code: list[str], atom_counts: int, output_list_of_smiles: bool = False, debug=False) -> typing.Tuple[str, int]:
     """
     Runs the ASP program with the given input and returns the results.
 
@@ -171,7 +171,7 @@ def main():
     print(f"ASP constraints:\n{chr(10).join(asp_constraints)}\n")
     print(f"Atom counts: {atom_counts}\n")
 
-    output, num_candidates = solve(asp_constraints, atom_counts, output_list_of_smiles=False)  # Set to True to get a copy/pastable list of SMILES strings (useful for pasting into a visualisation tool)
+    output, num_candidates = solve(asp_constraints, atom_counts, output_list_of_smiles=False, debug=True)  # Set to True to get a copy/pastable list of SMILES strings (useful for pasting into a visualisation tool)
     print(f"Found {num_candidates} candidates.\n")
     print(output)
 
