@@ -119,6 +119,22 @@ def formulas():
         "C2H3N",    # allows C=N and C≡N
         "CH3NO",    # allows N-O and C-N and C-O combinations
         "H2SO2",    # allows S=O and S-O combinations
+        "N2H4",    # allows N-N and N-H combinations
+        "CH2O2",
+        "C4H4N2",
+        "C6H6O2",
+        "C4H4N2",
+        "C6H7NO",
+        "PH3",
+        "H2S2",
+        "H4N2O2S",
+        "CH5NS",
+        "CH4O2S",
+        "CH3NS",
+        "HNO2",
+        "C2H7NO",
+        "C4H8"
+
     ]
 
 
