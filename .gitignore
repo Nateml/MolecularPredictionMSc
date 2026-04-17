@@ -214,3 +214,6 @@ __marimo__/
 
 #ignore model checkpoints
 *.pt
+
+# debug
+asp/debug/*
