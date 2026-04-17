@@ -58,6 +58,7 @@ def compute_loss(
     quantile_loss = 0.0
     for i, preds in enumerate(outputs['quantile']):
         quantile_loss += quantile_loss_fn(preds, targets['regression'][:, i])
+    quantile_loss /= len(outputs['quantile'])  # Average over quantiles
 
     loss = loss + quantile_weight * quantile_loss
 
@@ -123,6 +124,8 @@ def evaluate(
     all_cat_preds,     all_cat_labels     = [], []
 
     quantile_loss = 0.0
+    binary_loss = 0.0
+    ce_loss = 0.0
 
     for spectra, targets in loader:
         spectra = spectra.to(device)
@@ -135,6 +138,9 @@ def evaluate(
         outputs = model(spectra)
         losses = compute_loss(outputs, targets, binary_loss_fn, categorical_loss_fn, quantile_loss_fn, pos_weight=pos_weight, return_components=True)
         total_loss += losses[0].item() * len(spectra)
+        binary_loss += losses[1].item() * len(spectra)
+        ce_loss += losses[2].item() * len(spectra)
+        quantile_loss += losses[3].item() * len(spectra)
 
         # Binary
         all_binary_probs.append(torch.sigmoid(outputs["binary"]).cpu())
@@ -145,9 +151,6 @@ def evaluate(
         batch_cat_labels = [t.cpu() for t in targets["categorical"]]
         all_cat_preds.append(batch_cat_preds)
         all_cat_labels.append(batch_cat_labels)
-
-        # Quantile regression
-        quantile_loss += losses[3].item() * len(spectra)
 
     # Binary accuracy
     all_binary_probs  = torch.cat(all_binary_probs)
@@ -167,7 +170,9 @@ def evaluate(
         "loss":                total_loss / len(loader.dataset),
         "binary_accuracy":     binary_acc,
         "categorical_accuracy": cat_acc,
-        "quantile_loss":       quantile_loss,
+        "binary_loss":         binary_loss / len(loader.dataset),
+        "categorical_loss":    ce_loss / len(loader.dataset),
+        "quantile_loss":       quantile_loss / len(loader.dataset),
     }
 
 
@@ -196,6 +201,9 @@ def train(
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     val_loader   = DataLoader(val_dataset,   batch_size=batch_size)
+
+    # Print the number of samples in each dataset using the dataloader
+    logger.info(f"Train samples: {len(train_loader.dataset)}, Val samples: {len(val_loader.dataset)}")
 
     binary_loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight, reduction='mean')
     categorical_loss_fn = nn.CrossEntropyLoss()
@@ -256,7 +264,9 @@ def train(
             f"val_loss={val_metrics['loss']:.4f} | "
             f"val_binary_acc={val_metrics['binary_accuracy']:.4f} | "
             f"val_cat_acc={val_metrics['categorical_accuracy']:.4f} | "
-            f"val_quantile_loss={val_metrics['quantile_loss']:.4f}"
+            f"val_quantile_loss={val_metrics['quantile_loss']:.4f} | "
+            f"val_binary_loss={val_metrics['binary_loss']:.4f} | "
+            f"val_categorical_loss={val_metrics['categorical_loss']:.4f} | "
         )
         logger.info("-----------------------------------\n")
 

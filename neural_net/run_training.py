@@ -218,6 +218,16 @@ def main():
     # Split dataset
     logger.info("Splitting dataset into train/val/test...")
     train_ds, val_ds, test_ds = split_dataset(dataset, train_fraction=TRAIN_FRACTION, val_fraction=VAL_FRACTION)
+    # cast to MixedRawFeatureDataset to access normalisation
+    train_ds = MixedRawFeatureDataset.from_subset(train_ds)
+    val_ds = MixedRawFeatureDataset.from_subset(val_ds)
+    test_ds = MixedRawFeatureDataset.from_subset(test_ds)
+
+    # Normalise
+    logger.info("Normalising continuous features...")
+    mean, std = train_ds.normalise_continuous()
+    _, _ = val_ds.normalise_continuous(mean, std)
+    _, _ = test_ds.normalise_continuous(mean, std)
 
     logger.info(f"Train samples: {len(train_ds)}, Val samples: {len(val_ds)}, Test samples: {len(test_ds)}")
     train(
