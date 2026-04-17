@@ -26,8 +26,8 @@ Optional (disabled by default to keep files small):
     - dense structural_vector_onehot and feature_vector_onehot
 
 Compact-only mode:
-    - keeps only `spectrum`, `combined_packed_b64`, and `combined_nbits`
-      (plus optional `smiles` if requested)
+        - keeps only `spectrum`, `combined_packed_b64`, and `combined_nbits`
+            (plus `smiles` by default, configurable)
 
 A companion schema file is also written to map one-hot indices to names.
 
@@ -602,8 +602,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--keep-smiles-in-compact",
-        action="store_true",
-        help="In compact-only mode, also keep the smiles field.",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="In compact-only mode, keep the smiles field (default: true).",
     )
     return parser.parse_args()
 
