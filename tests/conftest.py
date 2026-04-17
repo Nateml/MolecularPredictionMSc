@@ -1,4 +1,5 @@
 import pytest
+import threading
 import re
 from rdkit import Chem
 
@@ -6,11 +7,23 @@ from predicates.interface import PredictionEntry, PredictionInterface
 from predicates.compiler import compile_asp_constraint
 from asp_bridge import solve
 
+class PipelineTimeoutError(Exception):
+    def __init__(self, predictions: dict, timeout: float | None):
+        self.predictions = predictions
+        self.timeout = timeout
+        msg = (
+            f"Pipeline previously timed out for predictions:\n{predictions}"
+            if timeout is None
+            else f"Pipeline timed out after {timeout}s for predictions:\n{predictions}"
+        )
+        super().__init__(msg)
+
 # --------------------------
 # Cache
 # --------------------------
 
 _PIPELINE_CACHE = {}
+_PIPELINE_TIMEOUTS = set()
 
 def make_hashable(predictions):
     def convert_value(v):
@@ -33,14 +46,20 @@ def make_hashable(predictions):
         )
     )
 
-
 @pytest.fixture(scope="function")
 def cached_run_pipeline(run_pipeline):
     def wrapper(predictions):
         key = make_hashable(predictions)
 
+        if key in _PIPELINE_TIMEOUTS:
+            raise PipelineTimeoutError(predictions, timeout=None)
+
         if key not in _PIPELINE_CACHE:
-            _PIPELINE_CACHE[key] = list(run_pipeline(predictions))
+            try:
+                _PIPELINE_CACHE[key] = list(run_pipeline(predictions))
+            except PipelineTimeoutError:
+                _PIPELINE_TIMEOUTS.add(key)
+                raise
 
         return _PIPELINE_CACHE[key]
 
@@ -70,23 +89,37 @@ def canonicalize(smiles_to_mol):
         return sorted(out)
     return _fn
 
-
 @pytest.fixture(scope="session")
 def run_pipeline(canonicalize):
-    def _fn(predictions: dict):
-        interface = PredictionInterface.model_validate(predictions)
+    def _fn(predictions: dict, timeout: float = 5.0):
+        result = [None]
+        exception = [None]
 
-        asp_constraints, atom_counts = compile_asp_constraint(interface)
+        def _target():
+            try:
+                interface = PredictionInterface.model_validate(predictions)
+                asp_constraints, atom_counts = compile_asp_constraint(interface)
+                output, _ = solve(
+                    asp_constraints,
+                    atom_counts,
+                    output_list_of_smiles=True
+                )
+                result[0] = canonicalize(output)
+            except Exception as e:
+                exception[0] = e
 
-        output, _ = solve(
-            asp_constraints,
-            atom_counts,
-            output_list_of_smiles=True
-        )
+        thread = threading.Thread(target=_target, daemon=True)
+        thread.start()
+        thread.join(timeout=timeout)
 
-        return canonicalize(output)
+        if thread.is_alive():
+            raise PipelineTimeoutError(predictions, timeout)
+        if exception[0] is not None:
+            raise exception[0]
+
+        return result[0]
+
     return _fn
-
 
 # -------------------------
 # Formula parsing
