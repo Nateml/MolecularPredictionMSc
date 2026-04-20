@@ -4,7 +4,7 @@ from torch.utils.data import DataLoader, random_split
 from typing import Optional
 from pathlib import Path
 
-from neural_net.model import MultitaskMLP, categorical_sizes_from_df, MultiQuantileLoss
+from neural_net.model import MultitaskMLPWithQRegression, categorical_sizes_from_df, MultiQuantileLoss
 from torch.utils.data import Dataset
 from loguru import logger
 
@@ -71,7 +71,7 @@ def compute_loss(
 # Per-epoch steps
 
 def train_one_epoch(
-    model: MultitaskMLP,
+    model: MultitaskMLPWithQRegression,
     loader: DataLoader,
     binary_loss_fn: nn.Module,
     categorical_loss_fn: nn.Module,
@@ -109,7 +109,7 @@ def train_one_epoch(
 
 @torch.no_grad()
 def evaluate(
-    model: MultitaskMLP,
+    model: MultitaskMLPWithQRegression,
     loader: DataLoader,
     binary_loss_fn: nn.Module,
     categorical_loss_fn: nn.Module,
@@ -179,7 +179,7 @@ def evaluate(
 # Main training loop
 
 def train(
-    model: MultitaskMLP,
+    model: MultitaskMLPWithQRegression,
     train_dataset: Dataset,
     val_dataset: Dataset,
     n_epochs: int = 50,
@@ -189,7 +189,7 @@ def train(
     pos_weight: Optional[torch.Tensor] = None,
     quantiles: list[float] = [0.05, 0.5, 0.95],
     output_path: Optional[Path] = None,
-) -> MultitaskMLP:
+) -> MultitaskMLPWithQRegression:
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

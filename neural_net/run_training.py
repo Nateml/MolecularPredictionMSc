@@ -8,7 +8,7 @@ import torch.nn as nn
 
 import torch
 
-from neural_net.model import MultitaskMLP
+from neural_net.model import MultitaskMLPWithQRegression
 from neural_net.onehot_decoded_dataset import OneHotDecodedDataset
 from neural_net.mixed_dataset import MixedFeatureDataset, MixedRawFeatureDataset
 from neural_net.train import split_dataset, evaluate, compute_loss, train
@@ -74,7 +74,7 @@ def run_hardcoded_training() -> None:
     print(f"Categorical sizes: {categorical_sizes}")
 
     # Construct model
-    model = MultitaskMLP(
+    model = MultitaskMLPWithQRegression(
         spectrum_len=SPECTRUM_LEN,
         hidden_dims=HIDDEN_DIMS,
         num_binary=maccs_length,
@@ -205,7 +205,7 @@ def main():
 
     # Construct model
     logger.info("Constructing model...")
-    model = MultitaskMLP(
+    model = MultitaskMLPWithQRegression(
         spectrum_len=SPECTRUM_LEN,
         hidden_dims=HIDDEN_DIMS,
         num_binary=maccs_length,
