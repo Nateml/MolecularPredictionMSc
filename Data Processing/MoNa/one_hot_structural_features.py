@@ -26,8 +26,8 @@ Optional (disabled by default to keep files small):
     - dense structural_vector_onehot and feature_vector_onehot
 
 Compact-only mode:
-    - keeps only `spectrum`, `combined_packed_b64`, and `combined_nbits`
-      (plus optional `smiles` if requested)
+        - keeps only `spectrum`, `combined_packed_b64`, and `combined_nbits`
+            (plus `smiles` by default, configurable)
 
 A companion schema file is also written to map one-hot indices to names.
 
@@ -534,7 +534,7 @@ def parse_args() -> argparse.Namespace:
         "--input",
         type=Path,
         default=Path(
-            "C:\\Users\\Tom\\Desktop\\Nieuwe map\\MolecularPredictionMSc\\Data Processing\\MoNa\\MoNA-filtered-curated-with-maccs-and-structure.json"
+            "C:\\Users\\Tom\\Documents\\Planning\\MolecularPredictionMSc\\Data Processing\\MoNa\\MoNA-filtered-curated-with-maccs-and-structure.json"
         ),
         help="Input JSON path.",
     )
@@ -542,7 +542,7 @@ def parse_args() -> argparse.Namespace:
         "--output",
         type=Path,
         default=Path(
-            "C:\\Users\\Tom\\Desktop\\Nieuwe map\\MolecularPredictionMSc\\Data Processing\\MoNa\\MoNA-filtered-curated-with-maccs-and-structure-onehot.json"
+            "C:\\Users\\Tom\\Documents\\Planning\\MolecularPredictionMSc\\Data Processing\\MoNa\\MoNA-filtered-curated-with-maccs-and-structure-onehot2.json"
         ),
         help="Output JSON path with one-hot features added.",
     )
@@ -550,7 +550,7 @@ def parse_args() -> argparse.Namespace:
         "--schema-output",
         type=Path,
         default=Path(
-            "C:\\Users\\Tom\\Desktop\\Nieuwe map\\MolecularPredictionMSc\\Data Processing\\MoNa\\feature_vector_onehot_schema.json"
+            "C:\\Users\\Tom\\Documents\\Planning\\MolecularPredictionMSc\\Data Processing\\MoNa\\feature_vector_onehot_schema2.json"
         ),
         help="Output JSON schema/index map path.",
     )
@@ -602,8 +602,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--keep-smiles-in-compact",
-        action="store_true",
-        help="In compact-only mode, also keep the smiles field.",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="In compact-only mode, keep the smiles field (default: true).",
     )
     return parser.parse_args()
 

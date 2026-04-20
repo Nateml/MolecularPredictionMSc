@@ -215,11 +215,11 @@ __marimo__/
 #ignore model checkpoints
 *.pt
 
-# notebooks
-*.ipynb
-
-# debug folder
+# debug
 asp/debug/*
 
-# pickle files
+# Notebooks
+notebooks/*
+
+# Pickled datasets
 *.pkl

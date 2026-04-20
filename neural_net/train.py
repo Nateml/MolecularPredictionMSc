@@ -4,7 +4,7 @@ from torch.utils.data import DataLoader, random_split
 from typing import Optional
 from pathlib import Path
 
-from neural_net.model import MultitaskMLP, categorical_sizes_from_df
+from neural_net.model import MultitaskMLPWithQRegression, categorical_sizes_from_df, MultiQuantileLoss
 from torch.utils.data import Dataset
 from loguru import logger
 
@@ -34,13 +34,17 @@ def compute_loss(
     targets: dict[str, torch.Tensor],
     binary_loss_fn: nn.Module,
     categorical_loss_fn: nn.Module,
+    quantile_loss_fn: nn.Module,
     binary_weight: float = 1.0,
     categorical_weight: float = 1.0,
+    quantile_weight: float = 1.0,
     pos_weight: Optional[torch.Tensor] = None,
+    return_components: bool = False
 ) -> torch.Tensor:
 
     # Binary loss (MACCS keys)
-    loss = binary_weight * binary_loss_fn(outputs["binary"], targets["binary"])
+    binary_loss = binary_loss_fn(outputs["binary"], targets["binary"])
+    loss = binary_weight * binary_loss
 
     # Categorical loss (atom counts), one CrossEntropyLoss per head
     ce_loss = 0.0
@@ -50,16 +54,28 @@ def compute_loss(
 
     loss = loss + categorical_weight * ce_loss
 
+    # Quantile loss (element counts)
+    quantile_loss = 0.0
+    for i, preds in enumerate(outputs['quantile']):
+        quantile_loss += quantile_loss_fn(preds, targets['regression'][:, i])
+    quantile_loss /= len(outputs['quantile'])  # Average over quantiles
+
+    loss = loss + quantile_weight * quantile_loss
+
+    if return_components:
+        return loss, binary_loss, ce_loss, quantile_loss
+
     return loss
 
 
 # Per-epoch steps
 
 def train_one_epoch(
-    model: MultitaskMLP,
+    model: MultitaskMLPWithQRegression,
     loader: DataLoader,
     binary_loss_fn: nn.Module,
     categorical_loss_fn: nn.Module,
+    quantile_loss_fn: nn.Module,
     optimizer: torch.optim.Optimizer,
     device: torch.device,
     pos_weight: Optional[torch.Tensor] = None,
@@ -74,11 +90,12 @@ def train_one_epoch(
         targets = {
             "binary":      targets["binary"].to(device),
             "categorical": [t.to(device) for t in targets["categorical"]],
+            "regression":      targets["continuous"].to(device),
         }
 
         optimizer.zero_grad()
         outputs = model(spectra)
-        loss = compute_loss(outputs, targets, binary_loss_fn, categorical_loss_fn, pos_weight=pos_weight)
+        loss = compute_loss(outputs, targets, binary_loss_fn, categorical_loss_fn, quantile_loss_fn, pos_weight=pos_weight)
         loss.backward()
         optimizer.step()
 
@@ -92,10 +109,11 @@ def train_one_epoch(
 
 @torch.no_grad()
 def evaluate(
-    model: MultitaskMLP,
+    model: MultitaskMLPWithQRegression,
     loader: DataLoader,
     binary_loss_fn: nn.Module,
     categorical_loss_fn: nn.Module,
+    quantile_loss_fn: nn.Module,
     device: torch.device,
     pos_weight: Optional[torch.Tensor] = None,
 ) -> dict[str, float]:
@@ -105,15 +123,24 @@ def evaluate(
     all_binary_probs,  all_binary_labels  = [], []
     all_cat_preds,     all_cat_labels     = [], []
 
+    quantile_loss = 0.0
+    binary_loss = 0.0
+    ce_loss = 0.0
+
     for spectra, targets in loader:
         spectra = spectra.to(device)
         targets = {
             "binary":      targets["binary"].to(device),
             "categorical": [t.to(device) for t in targets["categorical"]],
+            "regression":      targets["continuous"].to(device),
         }
 
         outputs = model(spectra)
-        total_loss += compute_loss(outputs, targets, binary_loss_fn, categorical_loss_fn, pos_weight=pos_weight).item() * len(spectra)
+        losses = compute_loss(outputs, targets, binary_loss_fn, categorical_loss_fn, quantile_loss_fn, pos_weight=pos_weight, return_components=True)
+        total_loss += losses[0].item() * len(spectra)
+        binary_loss += losses[1].item() * len(spectra)
+        ce_loss += losses[2].item() * len(spectra)
+        quantile_loss += losses[3].item() * len(spectra)
 
         # Binary
         all_binary_probs.append(torch.sigmoid(outputs["binary"]).cpu())
@@ -143,13 +170,16 @@ def evaluate(
         "loss":                total_loss / len(loader.dataset),
         "binary_accuracy":     binary_acc,
         "categorical_accuracy": cat_acc,
+        "binary_loss":         binary_loss / len(loader.dataset),
+        "categorical_loss":    ce_loss / len(loader.dataset),
+        "quantile_loss":       quantile_loss / len(loader.dataset),
     }
 
 
 # Main training loop
 
 def train(
-    model: MultitaskMLP,
+    model: MultitaskMLPWithQRegression,
     train_dataset: Dataset,
     val_dataset: Dataset,
     n_epochs: int = 50,
@@ -157,8 +187,9 @@ def train(
     lr: float = 1e-3,
     device: Optional[torch.device] = None,
     pos_weight: Optional[torch.Tensor] = None,
+    quantiles: list[float] = [0.05, 0.5, 0.95],
     output_path: Optional[Path] = None,
-) -> MultitaskMLP:
+) -> MultitaskMLPWithQRegression:
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -171,8 +202,12 @@ def train(
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     val_loader   = DataLoader(val_dataset,   batch_size=batch_size)
 
+    # Print the number of samples in each dataset using the dataloader
+    logger.info(f"Train samples: {len(train_loader.dataset)}, Val samples: {len(val_loader.dataset)}")
+
     binary_loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight, reduction='mean')
     categorical_loss_fn = nn.CrossEntropyLoss()
+    quantile_loss_fn = MultiQuantileLoss(quantiles=quantiles, device=device)  # 5th percentile, median, 95th percentile
 
     # Checkpoint/resume support
     # If OUTPUT_PATH exists and contains epoch, resume from next epoch.
@@ -193,8 +228,8 @@ def train(
     for epoch in range(start_epoch, n_epochs + 1):
         logger.info(f"Epoch {epoch}/{n_epochs}--------------------------------------")
 
-        train_loss = train_one_epoch(model, train_loader, binary_loss_fn, categorical_loss_fn, optimizer, device, pos_weight)
-        val_metrics = evaluate(model, val_loader, binary_loss_fn, categorical_loss_fn, device, pos_weight)
+        train_loss = train_one_epoch(model, train_loader, binary_loss_fn, categorical_loss_fn, quantile_loss_fn, optimizer, device, pos_weight)
+        val_metrics = evaluate(model, val_loader, binary_loss_fn, categorical_loss_fn, quantile_loss_fn, device, pos_weight)
 
         # Save latest checkpoint
         latest_ckpt = {
@@ -202,6 +237,8 @@ def train(
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "categorical_sizes": model.categorical_sizes,
+            "num_regression": model.num_regression,
+            "num_quantiles": model.num_quantiles,
             "maccs_length": model.num_binary
         }
         if checkpoint_path_latest:
@@ -215,6 +252,8 @@ def train(
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(),
                 "categorical_sizes": model.categorical_sizes,
+                "num_regression": model.num_regression,
+                "num_quantiles": model.num_quantiles,
                 "maccs_length": model.num_binary
             }
             torch.save(best_ckpt, output_path.with_suffix('.best.pt'))
@@ -224,7 +263,10 @@ def train(
             f"train_loss={train_loss:.4f} | "
             f"val_loss={val_metrics['loss']:.4f} | "
             f"val_binary_acc={val_metrics['binary_accuracy']:.4f} | "
-            f"val_cat_acc={val_metrics['categorical_accuracy']:.4f}"
+            f"val_cat_acc={val_metrics['categorical_accuracy']:.4f} | "
+            f"val_quantile_loss={val_metrics['quantile_loss']:.4f} | "
+            f"val_binary_loss={val_metrics['binary_loss']:.4f} | "
+            f"val_categorical_loss={val_metrics['categorical_loss']:.4f} | "
         )
         logger.info("-----------------------------------\n")
 

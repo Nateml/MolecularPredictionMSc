@@ -8,23 +8,25 @@ import torch.nn as nn
 
 import torch
 
-from neural_net.model import MultitaskMLP
+from neural_net.model import MultitaskMLPWithQRegression
 from neural_net.onehot_decoded_dataset import OneHotDecodedDataset
+from neural_net.mixed_dataset import MixedFeatureDataset, MixedRawFeatureDataset
 from neural_net.train import split_dataset, evaluate, compute_loss, train
 from torch.utils.data import DataLoader
 import torch.optim as optim
 
 
 # --- Hard-coded configuration (intentionally not generalized) ---
-DATA_PATH = Path("Data Processing/MoNa/MoNA-filtered-curated-with-maccs-and-structure-onehot.json")
-SCHEMA_PATH = Path("Data Processing/MoNa/feature_vector_onehot_schema.json")
+#DATA_PATH = Path("Data Processing/MoNa/MoNA-filtered-curated-with-maccs-and-structure-onehot.json")
+DATA_PATH = Path("Data Processing/MoNa/nobucket/MoNA-filtered-curated-with-maccs-and-structure_max-600Da.json")
+SCHEMA_PATH = Path("Data Processing/MoNa/feature_vector_mixed_schema.json")
 OUTPUT_PATH = Path("models/multitask_mlp_hardcoded.pt")
 
 SPECTRUM_LEN = 1000
 HIDDEN_DIMS: List[int] = [512, 256, 128]
 DROPOUT = 0.3
 EPOCHS = 20
-BATCH_SIZE = 64
+BATCH_SIZE = 256
 LR = 1e-3
 TRAIN_FRACTION = 0.7
 VAL_FRACTION = 0.15
@@ -38,27 +40,47 @@ def run_hardcoded_training() -> None:
     maccs_length = int(schema.get("maccs_length", 167))
 
     # Build dataset (compact one-hot packed format)
-    dataset = OneHotDecodedDataset(
+    #dataset = OneHotDecodedDataset(
+        #data_path=DATA_PATH,
+        #schema_path=SCHEMA_PATH,
+        #spectrum_len=SPECTRUM_LEN,
+    #)
+    dataset = MixedFeatureDataset(
         data_path=DATA_PATH,
-        schema_path=SCHEMA_PATH,
-        spectrum_len=SPECTRUM_LEN,
+        schema_path=SCHEMA_PATH
     )
+
+    print(f"Records: {len(dataset)}")
+    print(f"Onehot features: {dataset.n_categorical}")
+    print(f"Continuous featuers: {dataset.n_continuous}")
+
+    x, targets = dataset[0]
+
+    print(f"Spectrum shape: {x.shape}")
+    print(f"Binary target shape: {targets['binary'].shape}")
+    print(f"Continuous target shape: {targets['continuous'].shape}")
 
     # Build categorical_sizes dict in the dataset's feature order to ensure matching heads
     feature_schema = schema["feature_schema"]
     categorical_sizes: Dict[str, int] = {}
     for feat in dataset.feature_order:
         spec = feature_schema.get(feat)
+        if spec[feat]['type'] != 'onehot':
+            continue
         if spec is None:
             raise ValueError(f"Feature {feat} missing from schema.feature_schema")
         categorical_sizes[feat] = len(spec["onehot_names"])
 
+    print(f"Categorical sizes: {categorical_sizes}")
+
     # Construct model
-    model = MultitaskMLP(
+    model = MultitaskMLPWithQRegression(
         spectrum_len=SPECTRUM_LEN,
         hidden_dims=HIDDEN_DIMS,
         num_binary=maccs_length,
         categorical_sizes=categorical_sizes,
+        num_regression=dataset.n_continuous,
+        num_quantiles=3,
         dropout=DROPOUT,
     )
 
@@ -103,6 +125,7 @@ def run_hardcoded_training() -> None:
             targets = {
                 "binary": targets["binary"].to(device),
                 "categorical": [t.to(device) for t in targets["categorical"]],
+                "continuous": targets["continuous"].to(device),
             }
             optimizer.zero_grad()
             outputs = model(spectra)
@@ -155,35 +178,63 @@ def main():
 
     # Build dataset (compact one-hot packed format)
     logger.info(f"Building dataset from {DATA_PATH}...")
-    dataset = OneHotDecodedDataset(
+    dataset = MixedRawFeatureDataset(
         data_path=DATA_PATH,
-        schema_path=SCHEMA_PATH,
-        spectrum_len=SPECTRUM_LEN,
+        schema_path=SCHEMA_PATH
     )
+
+    logger.info(f"Dataset records: {len(dataset)}")
+    logger.info(f"Onehot features: {dataset.n_categorical}")
+    logger.info(f"Continuous features: {dataset.n_continuous}")
+
+    x, targets = dataset[0]
+    logger.info(f"Spectrum shape: {x.shape}")
+    logger.info(f"Continuous target shape: {targets['continuous'].shape}")
 
     # Build categorical_sizes dict in the dataset's feature order to ensure matching heads
     logger.info("Deriving categorical_sizes from dataset and schema...")
     feature_schema = schema["feature_schema"]
     categorical_sizes: Dict[str, int] = {}
-    for feat in dataset.feature_order:
+    for feat in dataset.onehot_feature_order:
         spec = feature_schema.get(feat)
+        if spec['type'] != 'onehot':
+            continue
         if spec is None:
             raise ValueError(f"Feature {feat} missing from schema.feature_schema")
         categorical_sizes[feat] = len(spec["onehot_names"])
 
     # Construct model
     logger.info("Constructing model...")
-    model = MultitaskMLP(
+    model = MultitaskMLPWithQRegression(
         spectrum_len=SPECTRUM_LEN,
         hidden_dims=HIDDEN_DIMS,
         num_binary=maccs_length,
         categorical_sizes=categorical_sizes,
+        num_regression=dataset.n_continuous,
+        num_quantiles=3,
         dropout=DROPOUT,
     )
 
     # Split dataset
     logger.info("Splitting dataset into train/val/test...")
     train_ds, val_ds, test_ds = split_dataset(dataset, train_fraction=TRAIN_FRACTION, val_fraction=VAL_FRACTION)
+    # cast to MixedRawFeatureDataset to access normalisation
+    train_ds = MixedRawFeatureDataset.from_subset(train_ds)
+    val_ds = MixedRawFeatureDataset.from_subset(val_ds)
+    test_ds = MixedRawFeatureDataset.from_subset(test_ds)
+
+    # Normalise
+    logger.info("Normalising continuous features...")
+    mean, std = train_ds.normalise_continuous()
+    _, _ = val_ds.normalise_continuous(mean, std)
+    _, _ = test_ds.normalise_continuous(mean, std)
+    # Save mean and std for later use in inference
+    normalisation_stats = {
+        "mean": mean,
+        "std": std,
+    }
+    with open(OUTPUT_PATH.with_suffix('.normalisation.json'), "w", encoding="utf-8") as f:
+        json.dump(normalisation_stats, f)
 
     logger.info(f"Train samples: {len(train_ds)}, Val samples: {len(val_ds)}, Test samples: {len(test_ds)}")
     train(
