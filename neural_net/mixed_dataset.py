@@ -448,6 +448,10 @@ class MixedRawFeatureDataset(Dataset):
         else:
             self._cont_std = None
  
+    def save(self, path: Path) -> None:
+        """Save the dataset as a pickle file."""
+        with open(path, "wb") as f:
+            pickle.dump(self, f)
 
     @classmethod
     def from_subset(cls, subset: Subset) -> "MixedRawFeatureDataset":
