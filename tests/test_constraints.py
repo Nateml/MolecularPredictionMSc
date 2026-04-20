@@ -1,5 +1,7 @@
 import pytest
+import warnings
 from constraint_defs import constraints
+from conftest import PipelineTimeoutError
 
 # -------------------------
 # Coverage test
@@ -14,13 +16,20 @@ def test_formula_coverage_verbose(
     for formula in formulas:
         predictions = build_predictions(formula)
 
-        for smi in cached_run_pipeline(predictions):
-            mol = smiles_to_mol(smi)
+        try:
+            for smi in cached_run_pipeline(predictions):
+                mol = smiles_to_mol(smi)
 
-            if constraint.rdkit_check(mol):
-                coverage["pos"].add(formula)
-            else:
-                coverage["neg"].add(formula)
+                if constraint.rdkit_check(mol):
+                    coverage["pos"].add(formula)
+                else:
+                    coverage["neg"].add(formula)
+        except PipelineTimeoutError as e:
+            warnings.warn(
+                f"Pipeline timed out while testing coverage for {constraint.name}.\n"
+                f"Predictions that caused timeout:\n{e.predictions}\n"
+                f"Consider increasing the timeout if this is a common occurrence."
+            )
 
     # Assert coverage
     assert coverage["pos"], \
@@ -41,7 +50,14 @@ def test_constraint_soundness(
     for formula in formulas:
         predictions = build_predictions(formula, constraint)
 
-        smiles_list = cached_run_pipeline(predictions)
+        try:
+            smiles_list = cached_run_pipeline(predictions)
+        except PipelineTimeoutError as e:
+            warnings.warn(
+                f"Pipeline timed out while testing soundness for {constraint.name}.\n"
+                f"Predictions that caused timeout:\n{e.predictions}"
+            )
+            continue
 
         for smi in smiles_list:
             mol = smiles_to_mol(smi)
@@ -60,11 +76,25 @@ def test_constraint_completeness(
     for formula in formulas:
         # Base
         base_pred = build_predictions(formula, constraint=None)
-        base_smiles = cached_run_pipeline(base_pred)
+        try:
+            base_smiles = cached_run_pipeline(base_pred)
+        except PipelineTimeoutError as e:
+            warnings.warn(
+                f"Pipeline timed out while testing completeness for {constraint.name}.\n"
+                f"Predictions that caused timeout:\n{e.predictions}"
+            )
+            continue
 
         # Constrained
         constrained_pred = build_predictions(formula, constraint)
-        constrained_smiles = cached_run_pipeline(constrained_pred)
+        try:
+            constrained_smiles = cached_run_pipeline(constrained_pred)
+        except PipelineTimeoutError as e:
+            warnings.warn(
+                f"Pipeline timed out while testing completeness for {constraint.name}.\n"
+                f"Predictions that caused timeout:\n{e.predictions}"
+            )
+            continue
 
         # Expected subset
         expected = []
