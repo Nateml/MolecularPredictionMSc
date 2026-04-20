@@ -220,3 +220,6 @@ asp/debug/*
 
 # Notebooks
 notebooks/*
+
+# Pickled datasets
+*.pkl

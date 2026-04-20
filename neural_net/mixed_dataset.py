@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import bisect
+import pickle
 import base64
 import json
 from pathlib import Path
@@ -230,6 +231,11 @@ class MixedFeatureDataset(Dataset):
             )
         else:
             self._cont_std = None
+
+    def save(self, path: Path) -> None:
+        """Save the dataset as a pickle file."""
+        with open(path, "wb") as f:
+            pickle.dump(self, f)
 
     # ------------------------------------------------------------------
     # Accessors
