@@ -228,6 +228,13 @@ def main():
     mean, std = train_ds.normalise_continuous()
     _, _ = val_ds.normalise_continuous(mean, std)
     _, _ = test_ds.normalise_continuous(mean, std)
+    # Save mean and std for later use in inference
+    normalisation_stats = {
+        "mean": mean,
+        "std": std,
+    }
+    with open(OUTPUT_PATH.with_suffix('.normalisation.json'), "w", encoding="utf-8") as f:
+        json.dump(normalisation_stats, f)
 
     logger.info(f"Train samples: {len(train_ds)}, Val samples: {len(val_ds)}, Test samples: {len(test_ds)}")
     train(
