@@ -8,7 +8,7 @@ from neural_net.model import MultitaskMLPWithQRegression, categorical_sizes_from
 from torch.utils.data import Dataset
 from loguru import logger
 
-from neural_net.logging import create_progress_bar, update_progress_bar
+from neural_net.nn_logging import create_progress_bar, update_progress_bar
 
 
 # Split
