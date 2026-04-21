@@ -17,9 +17,10 @@ import torch
 if __package__ is None:
     sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
 
-from neural_net.model import MultitaskMLP
+from neural_net.model import MultitaskMLP, MultitaskMLPWithQRegression
 from neural_net.onehot_decoded_dataset import OneHotDecodedDataset
 from neural_net.mixed_dataset import MixedFeatureDataset, MixedRawFeatureDataset
+
 from neural_net.train import split_dataset, evaluate, compute_loss, train
 from torch.utils.data import DataLoader
 import torch.optim as optim
@@ -214,7 +215,7 @@ def main():
 
     # Construct model
     logger.info("Constructing model...")
-    model = MultitaskMLPWithQRegression(
+    model =  MultitaskMLPWithQRegression(
         spectrum_len=SPECTRUM_LEN,
         hidden_dims=HIDDEN_DIMS,
         num_binary=maccs_length,
