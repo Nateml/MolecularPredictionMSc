@@ -26,8 +26,10 @@ DROPOUT = 0.3
 EPOCHS = 20
 BATCH_SIZE = 64
 LR = 1e-3
-TRAIN_FRACTION = 0.7
-VAL_FRACTION = 0.15
+TRAIN_FRACTION = 0.75
+VAL_FRACTION = 0.10
+CALIBRATION_FRACTION = 0.05
+TEST_FRACTION = 0.10
 
 
 def run_hardcoded_training() -> None:
@@ -63,7 +65,13 @@ def run_hardcoded_training() -> None:
     )
 
     # Split dataset
-    train_ds, val_ds, test_ds = split_dataset(dataset, train_fraction=TRAIN_FRACTION, val_fraction=VAL_FRACTION)
+    train_ds, val_ds, calibration_ds, test_ds = split_dataset(
+        dataset,
+        train_fraction=TRAIN_FRACTION,
+        val_fraction=VAL_FRACTION,
+        calibration_fraction=CALIBRATION_FRACTION,
+        test_fraction=TEST_FRACTION,
+    )
 
     # Auto device selection
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -182,10 +190,19 @@ def main():
     )
 
     # Split dataset
-    logger.info("Splitting dataset into train/val/test...")
-    train_ds, val_ds, test_ds = split_dataset(dataset, train_fraction=TRAIN_FRACTION, val_fraction=VAL_FRACTION)
+    logger.info("Splitting dataset into train/val/calibration/test...")
+    train_ds, val_ds, calibration_ds, test_ds = split_dataset(
+        dataset,
+        train_fraction=TRAIN_FRACTION,
+        val_fraction=VAL_FRACTION,
+        calibration_fraction=CALIBRATION_FRACTION,
+        test_fraction=TEST_FRACTION,
+    )
 
-    logger.info(f"Train samples: {len(train_ds)}, Val samples: {len(val_ds)}, Test samples: {len(test_ds)}")
+    logger.info(
+        f"Train samples: {len(train_ds)}, Val samples: {len(val_ds)}, "
+        f"Calibration samples: {len(calibration_ds)}, Test samples: {len(test_ds)}"
+    )
     train(
         model=model,
         train_dataset=train_ds,

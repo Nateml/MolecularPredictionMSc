@@ -1,11 +1,13 @@
+from collections import defaultdict
+import random
+from pathlib import Path
+from typing import Optional
+
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, random_split
-from typing import Optional
-from pathlib import Path
+from torch.utils.data import DataLoader, Dataset, Subset
 
 from neural_net.model import MultitaskMLP, categorical_sizes_from_df
-from torch.utils.data import Dataset
 from loguru import logger
 
 from neural_net.logging import create_progress_bar, update_progress_bar
@@ -13,18 +15,155 @@ from neural_net.logging import create_progress_bar, update_progress_bar
 
 # Split
 
+## example data entry:
+#{"spectrum": , "smiles": "CCO", "structural_vector_onehot_nbits": 262, "feature_vector_onehot_nbits": 429, "structural_vector_onehot_packed_b64": "ilStLQqiiAoggqCoIxKkQVUEQaqCmVIVKRpUYKqgiqCg", "feature_vector_onehot_packed_b64": "AAAAAAAACAJAMZYPwAJE7QVHjir9FKlaWhVFEBRBBUFQRiVIgqoIg1UFMqQqUjSowVVBFUFA", "combined_nbits": 429, "combined_packed_b64": "AAAAAAAACAJAMZYPwAJE7QVHjir9FKlaWhVFEBRBBUFQRiVIgqoIg1UFMqQqUjSowVVBFUFA"},
+
+
+def _record_smiles(record: object, index: int) -> str:
+    if isinstance(record, dict):
+        smiles = record.get("smiles")
+        if smiles is None:
+            compound = record.get("compound")
+            if isinstance(compound, dict):
+                smiles = compound.get("smiles")
+        if smiles is not None:
+            smiles_text = str(smiles).strip()
+            if smiles_text:
+                return smiles_text
+    return f"__record_{index}"
+
+
+def _stratification_key(targets: dict[str, torch.Tensor]) -> tuple[int, tuple[int, ...]]:
+    binary_active_count = int(torch.as_tensor(targets["binary"]).sum().item())
+    categorical_key = tuple(int(target.item()) for target in targets["categorical"])
+    return binary_active_count, categorical_key
+
+
+def _targets_match(left: dict[str, torch.Tensor], right: dict[str, torch.Tensor]) -> bool:
+    if not torch.equal(left["binary"], right["binary"]):
+        return False
+    if len(left["categorical"]) != len(right["categorical"]):
+        return False
+    return all(torch.equal(left_item, right_item) for left_item, right_item in zip(left["categorical"], right["categorical"]))
+
+
+def _allocate_grouped_strata(
+    grouped_indices: list[list[int]],
+    strata_keys: list[tuple[int, tuple[int, ...]]],
+    split_names: list[str],
+    split_fractions: list[float],
+    seed: int,
+) -> dict[str, list[int]]:
+    total_records = sum(len(indices) for indices in grouped_indices)
+    desired_totals = {
+        split_name: total_records * fraction
+        for split_name, fraction in zip(split_names, split_fractions)
+    }
+
+    stratum_totals: dict[tuple[int, tuple[int, ...]], int] = defaultdict(int)
+    for indices, strata_key in zip(grouped_indices, strata_keys):
+        stratum_totals[strata_key] += len(indices)
+
+    desired_stratum_totals: dict[str, dict[tuple[int, tuple[int, ...]], float]] = {
+        split_name: {
+            strata_key: total * fraction
+            for strata_key, total in stratum_totals.items()
+        }
+        for split_name, fraction in zip(split_names, split_fractions)
+    }
+
+    split_records: dict[str, list[int]] = {split_name: [] for split_name in split_names}
+    split_totals: dict[str, int] = {split_name: 0 for split_name in split_names}
+    split_stratum_totals: dict[str, dict[tuple[int, tuple[int, ...]], int]] = {
+        split_name: defaultdict(int) for split_name in split_names
+    }
+
+    rng = random.Random(seed)
+    shuffled_groups = list(zip(grouped_indices, strata_keys))
+    rng.shuffle(shuffled_groups)
+    shuffled_groups.sort(key=lambda item: len(item[0]), reverse=True)
+
+    for indices, strata_key in shuffled_groups:
+        group_size = len(indices)
+        best_split_name = split_names[0]
+        best_score = None
+
+        for split_name in split_names:
+            prospective_total = split_totals[split_name] + group_size
+            total_score = abs(prospective_total - desired_totals[split_name])
+
+            prospective_stratum_total = split_stratum_totals[split_name][strata_key] + group_size
+            stratum_score = abs(
+                prospective_stratum_total - desired_stratum_totals[split_name][strata_key]
+            )
+
+            score = total_score + stratum_score
+            if best_score is None or score < best_score:
+                best_score = score
+                best_split_name = split_name
+
+        split_records[best_split_name].extend(indices)
+        split_totals[best_split_name] += group_size
+        split_stratum_totals[best_split_name][strata_key] += group_size
+
+    return split_records
+
+
 def split_dataset(
     dataset: Dataset,
-    train_fraction: float = 0.7,
-    val_fraction: float = 0.15,
+    train_fraction: float = 0.75,
+    val_fraction: float = 0.10,
+    calibration_fraction: float = 0.05,
+    test_fraction: float = 0.10,
     seed: int = 42,
-) -> tuple[Dataset, Dataset, Dataset]:
+    check_label_consistency: bool = True,
+) -> tuple[Dataset, Dataset, Dataset, Dataset]:
 
-    n = len(dataset)
-    n_train = int(n * train_fraction)
-    n_val   = int(n * val_fraction)
-    n_test  = n - n_train - n_val
-    return random_split(dataset, [n_train, n_val, n_test], generator=torch.Generator().manual_seed(seed))
+    fractions = [train_fraction, val_fraction, calibration_fraction, test_fraction]
+    fraction_total = sum(fractions)
+    if abs(fraction_total - 1.0) > 1e-6:
+        raise ValueError(
+            "Split fractions must sum to 1.0, got "
+            f"{fraction_total:.6f}"
+        )
+
+    records = getattr(dataset, "records", None)
+    if records is None:
+        raise ValueError(
+            "split_dataset requires a dataset with a `records` attribute containing SMILES fields."
+        )
+
+    grouped_records: dict[str, list[int]] = defaultdict(list)
+    for index, record in enumerate(records):
+        grouped_records[_record_smiles(record, index)].append(index)
+
+    grouped_indices: list[list[int]] = []
+    strata_keys: list[tuple[int, tuple[int, ...]]] = []
+    for indices in grouped_records.values():
+        grouped_indices.append(indices)
+        _, reference_targets = dataset[indices[0]]
+        if check_label_consistency:
+            for index in indices[1:]:
+                _, targets = dataset[index]
+                if not _targets_match(reference_targets, targets):
+                    raise ValueError(
+                        "Identical SMILES records must have identical labels, but a duplicate group contains conflicting targets."
+                    )
+        strata_keys.append(_stratification_key(reference_targets))
+
+    split_names = ["train", "val", "calibration", "test"]
+    split_indices = _allocate_grouped_strata(
+        grouped_indices=grouped_indices,
+        strata_keys=strata_keys,
+        split_names=split_names,
+        split_fractions=fractions,
+        seed=seed,
+    )
+
+    return tuple(
+        Subset(dataset, split_indices[split_name])
+        for split_name in split_names
+    )
 
 
 # Loss
@@ -249,6 +388,6 @@ def train(
 #       categorical_sizes = categorical_sizes,
 #   )
 #
-#   train_ds, val_ds, test_ds = split_dataset(dataset)
+#   train_ds, val_ds, calibration_ds, test_ds = split_dataset(dataset)
 #   train(model, train_ds, val_ds)
 #   test_metrics = evaluate(model, DataLoader(test_ds, batch_size=64), device)
