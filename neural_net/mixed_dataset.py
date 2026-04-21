@@ -651,31 +651,33 @@ class MixedRawFeatureDataset(Dataset):
             self._cont_std = torch.tensor(std, dtype=torch.float32)
             return mean, std
 
-        all_cont = torch.stack([self[i][1]["continuous"] for i in range(len(self))])
-        # shape: (n_records, n_continuous)
+        pin_memory = torch.cuda.is_available()
+        loader = torch.utils.data.DataLoader(self, batch_size=512, shuffle=False, num_workers=4, pin_memory=pin_memory)
 
-        mean_t = all_cont.mean(dim=0)
-        std_t  = all_cont.std(dim=0).clamp(min=1e-8)
+        n = 0
+        running_sum    = None
+        running_sum_sq = None
+
+        for batch in loader:
+            cont = batch[1]["continuous"].float()   # (B, F)
+            B = cont.size(0)
+            if running_sum is None:
+                running_sum    = cont.sum(dim=0)
+                running_sum_sq = (cont ** 2).sum(dim=0)
+            else:
+                running_sum    += cont.sum(dim=0)
+                running_sum_sq += (cont ** 2).sum(dim=0)
+            n += B
+
+        mean_t = running_sum / n
+        # Var(X) = E[X²] - E[X]²
+        std_t  = (running_sum_sq / n - mean_t ** 2).sqrt().clamp(min=1e-8)
 
         self._cont_mean = mean_t
         self._cont_std  = std_t
 
         return mean_t.tolist(), std_t.tolist()
 
-    def set_normalisation(self, mean: List[float], std: List[float]) -> None:
-        """Set the normalisation parameters for this dataset, to be applied in __getitem__.
-
-        Should be called on val/test datasets after computing normalisation from the training dataset.
-        """
-        n_cont = len(self.continuous_feature_order)
-        if len(mean) != n_cont or len(std) != n_cont:
-            raise ValueError(
-                f"Mean/std length {len(mean)} / {len(std)} does not match "
-                f"n_continuous {n_cont} declared in schema"
-            )
-        self._cont_mean = torch.tensor(mean, dtype=torch.float32)
-        self._cont_std  = torch.tensor(std, dtype=torch.float32)
- 
     def _spectrum_to_dense(self, spectrum: str) -> torch.Tensor:
         vec = torch.zeros(self.spectrum_len, dtype=torch.float32)
         if not spectrum:
