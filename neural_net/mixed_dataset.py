@@ -178,12 +178,9 @@ class MixedFeatureDataset(Dataset):
         self.data_path = Path(data_path)
         self.schema_path = Path(schema_path)
 
-        # Load records
-        with open(self.data_path, "r", encoding="utf-8") as fh:
-            payload = json.load(fh)
-        if not isinstance(payload, list):
-            raise ValueError("data_path must be a JSON file containing a list of records.")
-        self.records = payload
+        # Build or load an index of JSON object byte offsets so we can fetch
+        # individual records on demand without loading the entire file.
+        self._index = self._build_or_load_index()
 
         # Parse schema
         (
@@ -246,6 +243,87 @@ class MixedFeatureDataset(Dataset):
     def categorical_sizes(self) -> Dict[str, int]:
         """Return {feature_name: n_classes} for all one-hot features."""
         return build_categorical_sizes_from_schema(self.schema_path)
+
+    # ------------------------------------------------------------------
+    # Streaming helpers
+    # ------------------------------------------------------------------
+
+    def _index_path(self) -> Path:
+        return self.data_path.with_name(self.data_path.name + ".idx")
+
+    def _build_or_load_index(self) -> List[Tuple[int, int]]:
+        idx_path = self._index_path()
+        if idx_path.exists():
+            with open(idx_path, "r", encoding="utf-8") as fh:
+                return [tuple(pair) for pair in json.load(fh)]
+        # Build index by scanning file bytes once (streaming)
+        index: List[Tuple[int, int]] = []
+        bufsize = 1 << 20
+        with open(self.data_path, "rb") as fh:
+            # Seek to first '['
+            pos = 0
+            while True:
+                b = fh.read(1)
+                if not b:
+                    raise ValueError("Unexpected end of file while locating JSON array start")
+                pos += 1
+                if b == b"[":
+                    break
+
+            depth = 0
+            in_string = False
+            escape = False
+            obj_start = None
+            # Read the rest in chunks
+            while True:
+                chunk = fh.read(bufsize)
+                if not chunk:
+                    break
+                for i, byte in enumerate(chunk):
+                    b = bytes([byte])
+                    if in_string:
+                        if escape:
+                            escape = False
+                        elif b == b"\\":
+                            escape = True
+                        elif b == b'"':
+                            in_string = False
+                        # else ignore
+                    else:
+                        if b == b'"':
+                            in_string = True
+                        elif b == b"{":
+                            if depth == 0:
+                                # record start at this absolute position
+                                obj_start = pos + i
+                            depth += 1
+                        elif b == b"}":
+                            depth -= 1
+                            if depth == 0 and obj_start is not None:
+                                obj_end = pos + i + 1
+                                index.append((obj_start, obj_end))
+                                obj_start = None
+                        elif b == b"]" and depth == 0:
+                            # end of array; stop scanning
+                            break
+                else:
+                    pos += len(chunk)
+                    continue
+                # broken via inner break (found closing ])
+                break
+
+        # Cache index
+        with open(idx_path, "w", encoding="utf-8") as fh:
+            json.dump(index, fh)
+        return index
+
+    def _load_record(self, idx: int) -> dict:
+        start, end = self._index[idx]
+        length = end - start
+        with open(self.data_path, "rb") as fh:
+            fh.seek(start)
+            raw = fh.read(length)
+        return json.loads(raw.decode("utf-8"))
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -318,10 +396,10 @@ class MixedFeatureDataset(Dataset):
     # ------------------------------------------------------------------
 
     def __len__(self) -> int:
-        return len(self.records)
+        return len(self._index)
 
     def __getitem__(self, idx: int):
-        record = self.records[idx]
+        record = self._load_record(idx)
 
         # ── Spectrum (input) ────────────────────────────────────────────
         x = self._spectrum_to_dense(str(record.get(self.spectrum_field, "")))
@@ -396,12 +474,9 @@ class MixedRawFeatureDataset(Dataset):
     ) -> None:
         self.data_path = Path(data_path)
         self.schema_path = Path(schema_path)
- 
-        with open(self.data_path, "r", encoding="utf-8") as fh:
-            payload = json.load(fh)
-        if not isinstance(payload, list):
-            raise ValueError("data_path must be a JSON file containing a list of records.")
-        self.records = payload
+        # Build or load an index of JSON object byte offsets so records can
+        # be loaded on-demand without keeping the whole file in memory.
+        self._index = self._build_or_load_index()
  
         (
             self.maccs_length,
@@ -453,7 +528,8 @@ class MixedRawFeatureDataset(Dataset):
         # Build a new instance without calling __init__ (avoids re-reading files)
         new = cls.__new__(cls)
         new.__dict__ = {**original.__dict__}
-        new.records = [original.records[i] for i in subset.indices]
+        # Narrow the index to the subset indices
+        new._index = [original._index[i] for i in subset.indices]
         new._cont_mean = None
         new._cont_std = None
         return new
@@ -473,6 +549,79 @@ class MixedRawFeatureDataset(Dataset):
     def categorical_sizes(self) -> Dict[str, int]:
         """Return {feature_name: n_classes} for all onehot features."""
         return build_categorical_sizes_from_schema(self.schema_path)
+
+    # ------------------------------------------------------------------
+    # Streaming helpers (same approach as MixedFeatureDataset)
+    # ------------------------------------------------------------------
+
+    def _index_path(self) -> Path:
+        return self.data_path.with_name(self.data_path.name + ".idx")
+
+    def _build_or_load_index(self) -> List[Tuple[int, int]]:
+        idx_path = self._index_path()
+        if idx_path.exists():
+            with open(idx_path, "r", encoding="utf-8") as fh:
+                return [tuple(pair) for pair in json.load(fh)]
+        index: List[Tuple[int, int]] = []
+        bufsize = 1 << 20
+        with open(self.data_path, "rb") as fh:
+            pos = 0
+            while True:
+                b = fh.read(1)
+                if not b:
+                    raise ValueError("Unexpected end of file while locating JSON array start")
+                pos += 1
+                if b == b"[":
+                    break
+
+            depth = 0
+            in_string = False
+            escape = False
+            obj_start = None
+            while True:
+                chunk = fh.read(bufsize)
+                if not chunk:
+                    break
+                for i, byte in enumerate(chunk):
+                    b = bytes([byte])
+                    if in_string:
+                        if escape:
+                            escape = False
+                        elif b == b"\\":
+                            escape = True
+                        elif b == b'"':
+                            in_string = False
+                    else:
+                        if b == b'"':
+                            in_string = True
+                        elif b == b"{":
+                            if depth == 0:
+                                obj_start = pos + i
+                            depth += 1
+                        elif b == b"}":
+                            depth -= 1
+                            if depth == 0 and obj_start is not None:
+                                obj_end = pos + i + 1
+                                index.append((obj_start, obj_end))
+                                obj_start = None
+                        elif b == b"]" and depth == 0:
+                            break
+                else:
+                    pos += len(chunk)
+                    continue
+                break
+
+        with open(idx_path, "w", encoding="utf-8") as fh:
+            json.dump(index, fh)
+        return index
+
+    def _load_record(self, idx: int) -> dict:
+        start, end = self._index[idx]
+        length = end - start
+        with open(self.data_path, "rb") as fh:
+            fh.seek(start)
+            raw = fh.read(length)
+        return json.loads(raw.decode("utf-8"))
  
     # ------------------------------------------------------------------
     # Internal helpers
@@ -598,10 +747,10 @@ class MixedRawFeatureDataset(Dataset):
     # ------------------------------------------------------------------
  
     def __len__(self) -> int:
-        return len(self.records)
+        return len(self._index)
  
     def __getitem__(self, idx: int):
-        record = self.records[idx]
+        record = self._load_record(idx)
  
         # ── Spectrum (model input) ──────────────────────────────────────
         x = self._spectrum_to_dense(str(record.get(self.spectrum_field, "")))

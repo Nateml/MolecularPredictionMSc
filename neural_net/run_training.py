@@ -6,7 +6,16 @@ from typing import Dict, List
 from loguru import logger
 import torch.nn as nn
 
+import sys
+from pathlib import Path as _Path
 import torch
+
+# If this file is executed directly (``python neural_net/run_training.py``),
+# Python sets ``sys.path[0]`` to the ``neural_net`` directory which breaks
+# package-relative imports like ``from neural_net.model import ...``.
+# When no package is set, prepend the project root so imports resolve.
+if __package__ is None:
+    sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
 
 from neural_net.model import MultitaskMLP
 from neural_net.onehot_decoded_dataset import OneHotDecodedDataset
@@ -18,7 +27,7 @@ import torch.optim as optim
 
 # --- Hard-coded configuration (intentionally not generalized) ---
 #DATA_PATH = Path("Data Processing/MoNa/MoNA-filtered-curated-with-maccs-and-structure-onehot.json")
-DATA_PATH = Path("Data Processing/MoNa/nobucket/MoNA-filtered-curated-with-maccs-and-structure_max-600Da.json")
+DATA_PATH = Path("Data Processing/MoNa/MoNA-filtered-curated-with-maccs-and-structure.json")
 SCHEMA_PATH = Path("Data Processing/MoNa/feature_vector_mixed_schema.json")
 OUTPUT_PATH = Path("models/multitask_mlp_hardcoded.pt")
 
@@ -222,6 +231,27 @@ def main():
     train_ds = MixedRawFeatureDataset.from_subset(train_ds)
     val_ds = MixedRawFeatureDataset.from_subset(val_ds)
     test_ds = MixedRawFeatureDataset.from_subset(test_ds)
+
+    # Export raw test set records to a JSON file next to the model output (for offline evaluation)
+    try:
+        test_out = OUTPUT_PATH.with_suffix('.test.json')
+        logger.info(f"Exporting test set ({len(test_ds)} records) to {test_out}...")
+        with open(test_out, 'w', encoding='utf-8') as fh:
+            fh.write('[')
+            for i in range(len(test_ds)):
+                # MixedRawFeatureDataset supports _load_record (raw dict) via index-based loading
+                if hasattr(test_ds, '_load_record'):
+                    rec = test_ds._load_record(i)
+                else:
+                    # fallback for older in-memory implementations
+                    rec = test_ds.records[i]
+                fh.write(json.dumps(rec))
+                if i != len(test_ds) - 1:
+                    fh.write(',')
+            fh.write(']')
+        logger.info(f"Wrote test set to {test_out}")
+    except Exception as exc:
+        logger.warning(f"Failed to export test set: {exc}")
 
     # Normalise
     logger.info("Normalising continuous features...")
