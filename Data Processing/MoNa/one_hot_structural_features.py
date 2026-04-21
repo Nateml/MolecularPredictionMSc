@@ -534,7 +534,7 @@ def parse_args() -> argparse.Namespace:
         "--input",
         type=Path,
         default=Path(
-            "C:\\Users\\Tom\\Desktop\\Nieuwe map\\MolecularPredictionMSc\\Data Processing\\MoNa\\MoNA-filtered-curated-with-maccs-and-structure.json"
+            "C:\\Users\\Tom\\Documents\\Planning\\MolecularPredictionMSc\\Data Processing\\MoNa\\MoNA-filtered-curated-with-maccs-and-structure.json"
         ),
         help="Input JSON path.",
     )
@@ -542,7 +542,7 @@ def parse_args() -> argparse.Namespace:
         "--output",
         type=Path,
         default=Path(
-            "C:\\Users\\Tom\\Desktop\\Nieuwe map\\MolecularPredictionMSc\\Data Processing\\MoNa\\MoNA-filtered-curated-with-maccs-and-structure-onehot.json"
+            "C:\\Users\\Tom\\Documents\\Planning\\MolecularPredictionMSc\\Data Processing\\MoNa\\MoNA-filtered-curated-with-maccs-and-structure-onehot2.json"
         ),
         help="Output JSON path with one-hot features added.",
     )
@@ -550,7 +550,7 @@ def parse_args() -> argparse.Namespace:
         "--schema-output",
         type=Path,
         default=Path(
-            "C:\\Users\\Tom\\Desktop\\Nieuwe map\\MolecularPredictionMSc\\Data Processing\\MoNa\\feature_vector_onehot_schema.json"
+            "C:\\Users\\Tom\\Documents\\Planning\\MolecularPredictionMSc\\Data Processing\\MoNa\\feature_vector_onehot_schema2.json"
         ),
         help="Output JSON schema/index map path.",
     )

@@ -60,9 +60,7 @@ class QuantileHead(nn.Module):
 
         return quantiles
         
-
-
-class MultitaskMLP(nn.Module):
+class MultitaskMLPWithQRegression(nn.Module):
     def __init__(
         self,
         spectrum_len: int = 1000,
@@ -117,6 +115,48 @@ class MultitaskMLP(nn.Module):
             "binary":      self.binary_head(h),
             "categorical": [head(h) for head in self.categorical_heads],
             "quantile": [head(h) for head in self.quantile_heads],
+        }
+
+class MultitaskMLP(nn.Module):
+    def __init__(
+        self,
+        spectrum_len: int = 1000,
+        hidden_dims: list[int] = [512, 256, 128],
+        num_binary: int = 166,
+        categorical_sizes: dict[str, int] | None = None,
+        dropout: float = 0.3,
+    ):
+        super().__init__()
+
+        if categorical_sizes is None:
+            raise ValueError("categorical_sizes is required. Use categorical_sizes_from_df() to derive it from your feature DataFrame.")
+
+        self.categorical_names = list(categorical_sizes.keys())
+        self.num_binary = num_binary
+        self.categorical_sizes = categorical_sizes
+
+        # Shared backbone
+        layers = []
+        prev = spectrum_len
+        for dim in hidden_dims:
+            layers.append(_mlp_block(prev, dim, dropout))
+            prev = dim
+        self.backbone = nn.Sequential(*layers)
+
+        # Binary head (MACCS keys)
+        self.binary_head = nn.Linear(prev, num_binary)
+
+        # Categorical heads (one per atom count feature)
+        self.categorical_heads = nn.ModuleList([
+            nn.Linear(prev, num_classes)
+            for num_classes in categorical_sizes.values()
+        ])
+
+    def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
+        h = self.backbone(x)
+        return {
+            "binary":      self.binary_head(h),
+            "categorical": [head(h) for head in self.categorical_heads],
         }
 
 class MultiQuantileLoss(nn.Module):

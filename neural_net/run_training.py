@@ -83,7 +83,7 @@ def run_hardcoded_training() -> None:
     print(f"Categorical sizes: {categorical_sizes}")
 
     # Construct model
-    model = MultitaskMLP(
+    model = MultitaskMLPWithQRegression(
         spectrum_len=SPECTRUM_LEN,
         hidden_dims=HIDDEN_DIMS,
         num_binary=maccs_length,
@@ -214,7 +214,7 @@ def main():
 
     # Construct model
     logger.info("Constructing model...")
-    model = MultitaskMLP(
+    model = MultitaskMLPWithQRegression(
         spectrum_len=SPECTRUM_LEN,
         hidden_dims=HIDDEN_DIMS,
         num_binary=maccs_length,
@@ -258,6 +258,13 @@ def main():
     mean, std = train_ds.normalise_continuous()
     _, _ = val_ds.normalise_continuous(mean, std)
     _, _ = test_ds.normalise_continuous(mean, std)
+    # Save mean and std for later use in inference
+    normalisation_stats = {
+        "mean": mean,
+        "std": std,
+    }
+    with open(OUTPUT_PATH.with_suffix('.normalisation.json'), "w", encoding="utf-8") as f:
+        json.dump(normalisation_stats, f)
 
     logger.info(f"Train samples: {len(train_ds)}, Val samples: {len(val_ds)}, Test samples: {len(test_ds)}")
     train(
