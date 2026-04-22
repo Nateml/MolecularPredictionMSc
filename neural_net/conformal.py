@@ -282,6 +282,12 @@ def predict_sets(
     include_0 = s0 <= q_hat      # (B, num_binary)
     include_1 = s1 <= q_hat
 
+    # Ensure non-empty sets: force argmax class when both are excluded
+    empty = ~(include_0 | include_1)  # (B, num_binary)
+    pred_is_1 = logits >= 0
+    include_0= include_0 | (empty & ~pred_is_1)
+    include_1 = include_1 | (empty & pred_is_1)
+
     # Stack into final set: last dim = {0,1}
     binary_sets = torch.stack([include_0, include_1], dim=-1)  # (B, num_binary, 2)
 
@@ -299,8 +305,15 @@ def predict_sets(
         probs = F.log_softmax(logits_i, dim=-1)  # (B, K_i)
         scores = -probs
         include = scores <= q_hat_i  # (B, K_i)
-        categorical_sets.append(include)
 
+        # Ensure non-empty sets: force argmax class when all are excluded
+        empty = ~include.any(dim=-1)
+        if empty.any():
+            argmax_idx = logits_i.argmax(dim=-1)
+            rows = torch.nonzero(empty, as_tuple=False).squeeze(-1)
+            include[rows, argmax_idx[rows]] = True
+
+        categorical_sets.append(include)
 
     results["categorical"] = categorical_sets  # list of (B, K_i)
 
@@ -319,7 +332,7 @@ def predict_sets(
         upper = q_high + q_hat_q
 
         # format into array of (lower, upper) pairs
-        quantile_sets = torch.stack([lower, upper], dim=-1)  # (
+        quantile_sets = torch.stack([lower, upper], dim=-1)  # (B, F, 2)
 
         results["quantile"] = quantile_sets
 
