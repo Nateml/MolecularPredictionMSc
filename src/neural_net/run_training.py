@@ -8,11 +8,11 @@ from typing import Dict, Tuple
 from loguru import logger
 from torch.utils.data import Dataset
 
-from config import config
-from neural_net.model import MultitaskMLP
-from neural_net.onehot_decoded_dataset import OneHotDecodedDataset
-from data.split import split_dataset
-from neural_net.train import train
+from src.config import config
+from src.neural_net.model import MultitaskMLP
+from neural_net.datasets import PackedDataset
+from src.data.split import split_dataset
+from src.neural_net.train import train
 
 TRAIN_FRACTION = 0.75
 VAL_FRACTION = 0.10
@@ -46,7 +46,7 @@ def main():
     maccs_length = int(schema.get("maccs_length", 167))
 
     logger.info(f"Building dataset from {data_path}...")
-    dataset = OneHotDecodedDataset(
+    dataset = PackedDataset(
         data_path=data_path,
         schema_path=schema_path,
         spectrum_len=config.model.spectrum_length,
@@ -55,7 +55,7 @@ def main():
     logger.info("Deriving categorical_sizes from dataset and schema...")
     feature_schema = schema["feature_schema"]
     categorical_sizes: Dict[str, int] = {}
-    for feat in dataset.feature_order:
+    for feat in dataset.onehot_feature_order:
         spec = feature_schema.get(feat)
         if spec is None:
             raise ValueError(f"Feature {feat} missing from schema.feature_schema")

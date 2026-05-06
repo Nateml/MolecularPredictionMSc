@@ -6,6 +6,7 @@ import torch
 from torch.utils.data import Dataset, Subset
 from collections import defaultdict
 from typing import Final, Union, Optional
+from neural_net.datasets import SpectrumDataset
 
 # Constants for dataset splitting
 TRAIN_FRACTION: Final[float] = 0.75
@@ -18,7 +19,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def split_dataset(
-    dataset: Dataset,
+    dataset: SpectrumDataset,
     train_fraction: float = TRAIN_FRACTION,
     val_fraction: float = VAL_FRACTION,
     calibration_fraction: float = CALIBRATION_FRACTION,
@@ -26,12 +27,12 @@ def split_dataset(
     seed: int = 42,
     check_label_consistency: bool = True,
     output_dir: Optional[str] = "../data/splits",
-) -> tuple[Dataset, Dataset, Dataset, Dataset]:
+) -> tuple[SpectrumDataset, SpectrumDataset, SpectrumDataset, SpectrumDataset]:
     """
     Splits the given dataset into train, validation, calibration, and test subsets according to the specified fractions.
 
     Args:
-        dataset (Dataset): The full dataset to split. Must have a `records` attribute containing
+        dataset (SpectrumDataset): The full dataset to split. Must have a `records` attribute containing
             the original data records with SMILES fields for grouping.
         train_fraction (float): Fraction of the dataset to allocate to the training set.
         val_fraction (float): Fraction of the dataset to allocate to the validation set.
@@ -88,7 +89,6 @@ def split_dataset(
         split_name: Subset(dataset, split_indices[split_name])
         for split_name in split_names
     }
-
 
     # Save subsets to disk
     if output_dir is not None:
