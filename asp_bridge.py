@@ -5,8 +5,11 @@ import clingo
 import math
 import typing
 import argparse
+from pathlib import Path
 from predicates.interface import PredictionInterface, PredictionEntry
 from predicates.compiler import compile_asp_constraint
+
+_ASP_DIR = Path(__file__).resolve().parent / "src" / "asp"
 
 # I have extracted this function from smiles.lp because my clingo doesn't have python support,
 # so the ASP program can't use #script(python) to call it directly.
@@ -44,7 +47,7 @@ def solve(asp_code: list[str], atom_counts: int, output_list_of_smiles: bool = F
     program = f"min_main_chain_len({k}).\n" + "\n".join(asp_code)
 
     # Save program to a file for debugging
-    debug_path = "asp/debug/debug_program.lp"
+    debug_path = str(_ASP_DIR / "debug" / "debug_program.lp")
     with open(debug_path, "w", encoding="utf-8") as f:
         f.write(program)
 
@@ -52,10 +55,10 @@ def solve(asp_code: list[str], atom_counts: int, output_list_of_smiles: bool = F
     ctl.load(debug_path)
 
     # Load the ASP program
-    ctl.load("asp/smiles.lp")
+    ctl.load(str(_ASP_DIR / "smiles.lp"))
 
     # Save the full ASP program to a file for debugging
-    with open("asp/debug/full_program.lp", "w", encoding="utf-8") as f:
+    with open(str(_ASP_DIR / "debug" / "full_program.lp"), "w", encoding="utf-8") as f:
         f.write(program)
 
     # Ground
@@ -76,7 +79,7 @@ def solve(asp_code: list[str], atom_counts: int, output_list_of_smiles: bool = F
 
     # Visualise with smiles-vis.py
     result = subprocess.run(
-        ['python', 'asp/smiles-vis.py'],
+        ['python', str(_ASP_DIR / 'smiles-vis.py')],
         input=output,
         capture_output=True,
         text=True,
