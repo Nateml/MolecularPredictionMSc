@@ -1,4 +1,4 @@
-from src.neural_net.model import MultitaskMLP
-from src.neural_net.train import train, evaluate
-from src.data.split import split_dataset
-from src.neural_net.packed_dataset import PackedMoNADataset
+from neural_net.model import MultitaskMLP
+from neural_net.train import train, evaluate
+from data.split import split_dataset
+from neural_net.packed_dataset import PackedMoNADataset

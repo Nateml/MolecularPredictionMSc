@@ -1,7 +1,7 @@
 import pytest
 import warnings
-from src.tests.constraint_defs import constraints
-from src.tests.conftest import PipelineTimeoutError
+from tests.constraint_defs import constraints
+from tests.conftest import PipelineTimeoutError
 
 # -------------------------
 # Coverage test

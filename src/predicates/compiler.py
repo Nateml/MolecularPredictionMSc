@@ -1,8 +1,8 @@
 from typing import Tuple
 
-from src.predicates.definitions import MACCS_DEFINITIONS, FEATURE_VECTOR_DEFINITIONS
-from src.predicates.interface import PredictionInterface, PredictionEntry
-from src.predicates.definitions import HELPER_PREDICATES
+from predicates.definitions import MACCS_DEFINITIONS, FEATURE_VECTOR_DEFINITIONS
+from predicates.interface import PredictionInterface, PredictionEntry
+from predicates.definitions import HELPER_PREDICATES
 
 def compile_asp_constraint(interface: PredictionInterface, HELPERS = HELPER_PREDICATES) -> Tuple[str, dict[str, int]]:
     """

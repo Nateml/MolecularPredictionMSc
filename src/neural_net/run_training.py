@@ -8,11 +8,11 @@ from typing import Dict, Tuple
 from loguru import logger
 from torch.utils.data import Dataset
 
-from src.config import config
-from src.neural_net.model import MultitaskMLP
-from src.neural_net.onehot_decoded_dataset import OneHotDecodedDataset
-from src.data.split import split_dataset
-from src.neural_net.train import train
+from config import config
+from neural_net.model import MultitaskMLP
+from neural_net.onehot_decoded_dataset import OneHotDecodedDataset
+from data.split import split_dataset
+from neural_net.train import train
 
 TRAIN_FRACTION = 0.75
 VAL_FRACTION = 0.10
