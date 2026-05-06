@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
-from typing import Dict
+import pickle
+from pathlib import Path
+from typing import Dict, Tuple
 
 from loguru import logger
-import torch
+from torch.utils.data import Dataset
 
 from src.config import config
 from src.neural_net.model import MultitaskMLP
@@ -16,6 +18,20 @@ TRAIN_FRACTION = 0.75
 VAL_FRACTION = 0.10
 CALIBRATION_FRACTION = 0.05
 TEST_FRACTION = 0.10
+
+_SPLITS_DIR = Path(__file__).resolve().parents[2] / "data" / "splits"
+_SPLIT_NAMES = ["train", "val", "calibration", "test"]
+
+
+def _splits_exist(splits_dir: Path) -> bool:
+    return all((splits_dir / f"{name}.pkl").exists() for name in _SPLIT_NAMES)
+
+
+def _load_splits(splits_dir: Path) -> Tuple[Dataset, Dataset, Dataset, Dataset]:
+    return tuple(
+        pickle.loads((splits_dir / f"{name}.pkl").read_bytes())
+        for name in _SPLIT_NAMES
+    )
 
 
 def main():
@@ -54,14 +70,19 @@ def main():
         dropout=config.model.dropout,
     )
 
-    logger.info("Splitting dataset into train/val/calibration/test...")
-    train_ds, val_ds, calibration_ds, test_ds = split_dataset(
-        dataset,
-        train_fraction=TRAIN_FRACTION,
-        val_fraction=VAL_FRACTION,
-        calibration_fraction=CALIBRATION_FRACTION,
-        test_fraction=TEST_FRACTION,
-    )
+    if _splits_exist(_SPLITS_DIR):
+        logger.info(f"Loading existing splits from {_SPLITS_DIR}...")
+        train_ds, val_ds, calibration_ds, test_ds = _load_splits(_SPLITS_DIR)
+    else:
+        logger.info(f"No splits found at {_SPLITS_DIR}, creating new splits...")
+        train_ds, val_ds, calibration_ds, test_ds = split_dataset(
+            dataset,
+            train_fraction=TRAIN_FRACTION,
+            val_fraction=VAL_FRACTION,
+            calibration_fraction=CALIBRATION_FRACTION,
+            test_fraction=TEST_FRACTION,
+            output_dir=str(_SPLITS_DIR),
+        )
 
     logger.info(
         f"Train samples: {len(train_ds)}, Val samples: {len(val_ds)}, "
