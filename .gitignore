@@ -222,5 +222,8 @@ asp/debug/*
 # Notebooks
 notebooks/*
 
-# Pickled datasets
+# Claude
+CLAUDE.md
+
+# Pickle
 *.pkl

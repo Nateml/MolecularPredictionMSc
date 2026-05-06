@@ -38,8 +38,10 @@ DROPOUT = 0.3
 EPOCHS = 20
 BATCH_SIZE = 256
 LR = 1e-3
-TRAIN_FRACTION = 0.7
-VAL_FRACTION = 0.15
+TRAIN_FRACTION = 0.75
+VAL_FRACTION = 0.10
+CALIBRATION_FRACTION = 0.05
+TEST_FRACTION = 0.10
 
 
 def run_hardcoded_training() -> None:
@@ -95,7 +97,13 @@ def run_hardcoded_training() -> None:
     )
 
     # Split dataset
-    train_ds, val_ds, test_ds = split_dataset(dataset, train_fraction=TRAIN_FRACTION, val_fraction=VAL_FRACTION)
+    train_ds, val_ds, calibration_ds, test_ds = split_dataset(
+        dataset,
+        train_fraction=TRAIN_FRACTION,
+        val_fraction=VAL_FRACTION,
+        calibration_fraction=CALIBRATION_FRACTION,
+        test_fraction=TEST_FRACTION,
+    )
 
     # Auto device selection
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -226,12 +234,19 @@ def main():
     )
 
     # Split dataset
-    logger.info("Splitting dataset into train/val/test...")
-    train_ds, val_ds, test_ds = split_dataset(dataset, train_fraction=TRAIN_FRACTION, val_fraction=VAL_FRACTION)
+    logger.info("Splitting dataset into train/val/calibration/test...")
+    train_ds, val_ds, calibration_ds, test_ds = split_dataset(
+        dataset,
+        train_fraction=TRAIN_FRACTION,
+        val_fraction=VAL_FRACTION,
+        calibration_fraction=CALIBRATION_FRACTION,
+        test_fraction=TEST_FRACTION,
+    )
     # cast to MixedRawFeatureDataset to access normalisation
     train_ds = MixedRawFeatureDataset.from_subset(train_ds)
     val_ds = MixedRawFeatureDataset.from_subset(val_ds)
     test_ds = MixedRawFeatureDataset.from_subset(test_ds)
+    calibration_ds = MixedRawFeatureDataset.from_subset(calibration_ds)
 
     # Export raw test set records to a JSON file next to the model output (for offline evaluation)
     try:
@@ -259,6 +274,7 @@ def main():
     mean, std = train_ds.normalise_continuous()
     _, _ = val_ds.normalise_continuous(mean, std)
     _, _ = test_ds.normalise_continuous(mean, std)
+    _, _ = calibration_ds.normalise_continuous(mean, std)
     # Save mean and std for later use in inference
     normalisation_stats = {
         "mean": mean,
@@ -267,7 +283,10 @@ def main():
     with open(OUTPUT_PATH.with_suffix('.normalisation.json'), "w", encoding="utf-8") as f:
         json.dump(normalisation_stats, f)
 
-    logger.info(f"Train samples: {len(train_ds)}, Val samples: {len(val_ds)}, Test samples: {len(test_ds)}")
+    logger.info(
+        f"Train samples: {len(train_ds)}, Val samples: {len(val_ds)}, "
+        f"Calibration samples: {len(calibration_ds)}, Test samples: {len(test_ds)}"
+    )
     train(
         model=model,
         train_dataset=train_ds,
