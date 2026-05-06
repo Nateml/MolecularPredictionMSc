@@ -217,6 +217,7 @@ __marimo__/
 
 # debug
 asp/debug/*
+src/asp/debug/*
 
 # Notebooks
 notebooks/*
