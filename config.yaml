@@ -2,6 +2,8 @@ model:
   spectrum_length: 1000
   hidden_dims: [512, 256, 128]
   dropout: 0.3
+  num_quantiles: 3
+  regression_hidden_dim: 64
 
 training:
   batch_size: 128

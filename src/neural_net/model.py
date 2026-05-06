@@ -35,6 +35,88 @@ def _mlp_block(in_dim: int, out_dim: int, dropout: float) -> nn.Sequential:
         nn.Dropout(dropout),
     )
 
+class QuantileHead(nn.Module):
+    def __init__(self, in_dim: int, hidden_dim: int, num_quantiles: int):
+        super().__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(in_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, num_quantiles)
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # The first quantile is predicted directly, and the others are predicted as positive offsets from it, to ensure monotonicity.
+
+        raw = self.mlp(x)  # (batch, num_quantiles)
+
+        base = raw[:, :1]  # first quantile
+        deltas = F.softplus(raw[:, 1:])  # strictly positive
+
+        quantiles = torch.cat(
+            [base, base + torch.cumsum(deltas, dim=1)],
+            dim=1
+        )
+
+        return quantiles
+        
+
+class MultitaskMLPWithQRegression(nn.Module):
+    def __init__(
+        self,
+        spectrum_len: int = 1000,
+        hidden_dims: list[int] = [512, 256, 128],
+        num_binary: int = 166,
+        categorical_sizes: dict[str, int] | None = None,
+        num_regression: int = 4,
+        num_quantiles: int = 3,
+        dropout: float = 0.3,
+        regression_hidden_dim: int = 64
+    ):
+        super().__init__()
+
+        if categorical_sizes is None:
+            raise ValueError("categorical_sizes is required. Use categorical_sizes_from_df() to derive it from your feature DataFrame.")
+
+        self.categorical_names = list(categorical_sizes.keys())
+        self.num_binary = num_binary
+        self.categorical_sizes = categorical_sizes
+        self.num_regression = num_regression
+        self.num_quantiles = num_quantiles
+
+        # Shared backbone
+        layers = []
+        prev = spectrum_len
+        for dim in hidden_dims:
+            layers.append(_mlp_block(prev, dim, dropout))
+            prev = dim
+        self.backbone = nn.Sequential(*layers)
+
+        # Binary head (MACCS keys)
+        self.binary_head = nn.Linear(prev, num_binary)
+
+        # Categorical heads (one per categorical feature)
+        self.categorical_heads = nn.ModuleList([
+            nn.Linear(prev, num_classes)
+            for num_classes in categorical_sizes.values()
+        ])
+
+        # Quantile regression head (one per element count)
+        # Element counts are unique because they're the only features that we cannot easily constrain to an interval in ASP,
+        # since the molecular formula is an input to the program.
+        self.quantile_heads = nn.ModuleList([
+            QuantileHead(prev, regression_hidden_dim, num_quantiles)
+            for _ in range(num_regression)
+        ])
+
+
+    def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
+        h = self.backbone(x)
+        return {
+            "binary":      self.binary_head(h),
+            "categorical": [head(h) for head in self.categorical_heads],
+            "quantile": [head(h) for head in self.quantile_heads],
+        }
+
 
 class MultitaskMLP(nn.Module):
     def __init__(

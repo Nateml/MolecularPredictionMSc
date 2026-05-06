@@ -13,6 +13,8 @@ class ModelConfig(BaseModel):
     spectrum_length: int = 1000
     hidden_dims: List[int] = [512, 256, 128]
     dropout: float = 0.3
+    num_quantiles: int = 3
+    regression_hidden_dim: int = 64
 
 
 class TrainingConfig(BaseModel):
