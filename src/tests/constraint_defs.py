@@ -3,7 +3,7 @@ from typing import Callable
 from rdkit.Chem.rdchem import Mol
 from rdkit.Chem import MACCSkeys
 
-from predicates.definitions import MACCS_DEFINITIONS,FEATURE_VECTOR_DEFINITIONS
+from src.predicates.definitions import MACCS_DEFINITIONS,FEATURE_VECTOR_DEFINITIONS
 
 
 @dataclass

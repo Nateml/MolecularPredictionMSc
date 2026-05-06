@@ -1,0 +1,16 @@
+model:
+  spectrum_length: 1000
+  hidden_dims: [512, 256, 128]
+  dropout: 0.3
+
+training:
+  batch_size: 128
+  num_epochs: 20
+  learning_rate: 1e-3
+
+data:
+  dataset_path: "data_processing/MoNa/MoNA-filtered-curated-with-maccs-and-structure-onehot.json"
+  schema_path: "data_processing/MoNa/feature_vector_onehot_schema.json"
+
+checkpointing:
+  save_dir: "models"

@@ -1,6 +1,6 @@
 from typing import Union, Dict, Optional
 from pydantic import BaseModel, RootModel, field_validator, model_validator
-from predicates.definitions import KEYS
+from src.predicates.definitions import KEYS
 
 KeyID = Union[int, str]
 """Identifier for a prediction entry, can be an integer or string. E.g. MACCS key ID 154 corresponds to the presence of a carbonyl group."""

@@ -3,8 +3,8 @@ import threading
 import re
 from rdkit import Chem
 
-from predicates.interface import PredictionEntry, PredictionInterface
-from predicates.compiler import compile_asp_constraint
+from src.predicates.interface import PredictionEntry, PredictionInterface
+from src.predicates.compiler import compile_asp_constraint
 from asp_bridge import solve
 
 class PipelineTimeoutError(Exception):

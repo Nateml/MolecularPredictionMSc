@@ -40,6 +40,7 @@ pydantic_core==2.41.5
 Pygments==2.20.0
 pytest==9.0.3
 python-dateutil==2.9.0.post0
+PyYAML==6.0.3
 rdkit==2026.3.1
 regex==2026.4.4
 setuptools==81.0.0

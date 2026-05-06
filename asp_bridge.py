@@ -5,8 +5,8 @@ import clingo
 import math
 import typing
 import argparse
-from predicates.interface import PredictionInterface, PredictionEntry
-from predicates.compiler import compile_asp_constraint
+from src.predicates.interface import PredictionInterface, PredictionEntry
+from src.predicates.compiler import compile_asp_constraint
 
 # I have extracted this function from smiles.lp because my clingo doesn't have python support,
 # so the ASP program can't use #script(python) to call it directly.
