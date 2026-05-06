@@ -655,3 +655,49 @@ class RawFeatureDataset(SpectrumDataset):
             "categorical": categorical_targets,
             "continuous": y_continuous,
         }
+
+
+# ---------------------------------------------------------------------------
+# Factory
+# ---------------------------------------------------------------------------
+
+def _detect_schema_type(schema_path: str | Path) -> str:
+    """Inspect schema to determine which dataset class to use.
+
+    Returns one of: "packed", "packed_continuous", "raw".
+    """
+    with open(schema_path, "r", encoding="utf-8") as fh:
+        schema = json.load(fh)
+
+    if "onehot_names" not in schema:
+        return "raw"
+
+    has_continuous = any(
+        spec.get("type") == "continuous"
+        for spec in schema.get("feature_schema", {}).values()
+    )
+    return "packed_continuous" if has_continuous else "packed"
+
+
+def dataset_from_schema(
+    data_path: str | Path,
+    schema_path: str | Path,
+    **kwargs,
+) -> SpectrumDataset:
+    """Instantiate the correct dataset class by inspecting the schema file.
+
+    Selection rules
+    ---------------
+    - No top-level ``onehot_names``            → RawFeatureDataset
+    - ``onehot_names`` + continuous features   → PackedContinuousDataset
+    - ``onehot_names`` + no continuous         → PackedDataset
+
+    All extra keyword arguments are forwarded to the chosen constructor.
+    """
+    schema_type = _detect_schema_type(schema_path)
+    cls = {
+        "packed": PackedDataset,
+        "packed_continuous": PackedContinuousDataset,
+        "raw": RawFeatureDataset,
+    }[schema_type]
+    return cls(data_path, schema_path, **kwargs)

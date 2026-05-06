@@ -1,18 +1,17 @@
 from __future__ import annotations
 
-import json
 import pickle
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Tuple
 
 from loguru import logger
 from torch.utils.data import Dataset
 
-from src.config import config
-from src.neural_net.model import MultitaskMLP
-from neural_net.datasets import PackedDataset
-from src.data.split import split_dataset
-from src.neural_net.train import train
+from config import config
+from neural_net.model import MultitaskMLP
+from neural_net.datasets import dataset_from_schema
+from data.split import split_dataset
+from neural_net.train import train
 
 TRAIN_FRACTION = 0.75
 VAL_FRACTION = 0.10
@@ -39,34 +38,20 @@ def main():
     schema_path = config.data.resolved_schema_path()
     output_path = config.checkpointing.resolved_save_dir() / "multitask_mlp.pt"
 
-    logger.info(f"Loading schema from {schema_path}...")
-    with open(schema_path, "r", encoding="utf-8") as f:
-        schema = json.load(f)
-
-    maccs_length = int(schema.get("maccs_length", 167))
-
     logger.info(f"Building dataset from {data_path}...")
-    dataset = PackedDataset(
+    dataset = dataset_from_schema(
         data_path=data_path,
         schema_path=schema_path,
         spectrum_len=config.model.spectrum_length,
     )
-
-    logger.info("Deriving categorical_sizes from dataset and schema...")
-    feature_schema = schema["feature_schema"]
-    categorical_sizes: Dict[str, int] = {}
-    for feat in dataset.onehot_feature_order:
-        spec = feature_schema.get(feat)
-        if spec is None:
-            raise ValueError(f"Feature {feat} missing from schema.feature_schema")
-        categorical_sizes[feat] = len(spec["onehot_names"])
+    logger.info(f"Dataset type: {type(dataset).__name__}, {len(dataset)} records")
 
     logger.info("Constructing model...")
     model = MultitaskMLP(
         spectrum_len=config.model.spectrum_length,
         hidden_dims=config.model.hidden_dims,
-        num_binary=maccs_length,
-        categorical_sizes=categorical_sizes,
+        num_binary=dataset.maccs_length,
+        categorical_sizes=dataset.categorical_sizes(),
         dropout=config.model.dropout,
     )
 
