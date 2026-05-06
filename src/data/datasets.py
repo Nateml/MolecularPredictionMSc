@@ -5,6 +5,7 @@ import bisect
 import json
 import pickle
 from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -261,10 +262,18 @@ class SpectrumDataset(Dataset, ABC):
         return index
 
     def _load_record(self, idx: int) -> dict:
+        cache = self.__dict__.get("_records_cache")
+        if cache is not None:
+            return cache[idx]
         start, end = self._index[idx]
         with open(self.data_path, "rb") as fh:
             fh.seek(start)
             return json.loads(fh.read(end - start).decode("utf-8"))
+
+    def __getstate__(self) -> dict:
+        state = self.__dict__.copy()
+        state.pop("_records_cache", None)
+        return state
 
     @property
     def records(self) -> List[dict]:
@@ -272,9 +281,35 @@ class SpectrumDataset(Dataset, ABC):
 
         Exists for compatibility with split_dataset. Avoid on very large datasets.
         """
-        if not hasattr(self, "_records_cache"):
-            self._records_cache = [self._load_record(i) for i in range(len(self._index))]
+        if "_records_cache" not in self.__dict__:
+            with ThreadPoolExecutor() as pool:
+                self._records_cache = list(pool.map(self._load_record_from_file, range(len(self._index))))
         return self._records_cache
+
+    def _load_record_from_file(self, idx: int) -> dict:
+        start, end = self._index[idx]
+        with open(self.data_path, "rb") as fh:
+            fh.seek(start)
+            return json.loads(fh.read(end - start).decode("utf-8"))
+
+    def iter_smiles(self) -> List[str]:
+        """Return SMILES string for each record without loading full records into memory.
+
+        Uses a single file open with sequential seeks — much cheaper than loading
+        all records for split grouping. Returns empty string when SMILES is absent.
+        """
+        result = []
+        with open(self.data_path, "rb") as fh:
+            for i, (start, end) in enumerate(self._index):
+                fh.seek(start)
+                record = json.loads(fh.read(end - start).decode("utf-8"))
+                smiles = record.get("smiles")
+                if smiles is None:
+                    compound = record.get("compound")
+                    if isinstance(compound, dict):
+                        smiles = compound.get("smiles")
+                result.append(str(smiles).strip() if smiles else f"__record_{i}")
+        return result
 
     # ------------------------------------------------------------------
     # Subset construction

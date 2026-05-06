@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from pathlib import Path
+import json
 
+from pathlib import Path
 from loguru import logger
 
 from config import config
-from neural_net.model import MultitaskMLP, MultitaskMLPWithQRegression
-from neural_net.datasets import dataset_from_schema, RawFeatureDataset
+from model.model import MultitaskMLP, MultitaskMLPWithQRegression
+from data.datasets import dataset_from_schema, RawFeatureDataset, SpectrumDataset
 from data.split import (
     split_dataset,
     splits_dir,
@@ -17,11 +18,9 @@ from data.split import (
     VAL_FRACTION,
     CALIBRATION_FRACTION,
     TEST_FRACTION,
+    SEED
 )
-from neural_net.train import train
-
-SEED = 42
-
+from model.train import train
 
 def main():
     data_path = config.data.resolved_dataset_path()
@@ -79,12 +78,46 @@ def main():
             calibration_fraction=CALIBRATION_FRACTION,
             test_fraction=TEST_FRACTION,
             seed=SEED,
+            check_label_consistency=True,
         )
 
     logger.info(
         f"Train samples: {len(train_ds)}, Val samples: {len(val_ds)}, "
         f"Calibration samples: {len(calibration_ds)}, Test samples: {len(test_ds)}"
     )
+
+    # hash of this specific data split
+    split_hash = split_dir.name
+
+    # Dataset is either of type RawFeatureDataset or PackedDataset, both of which
+    # inherit from SpectrumDataset which implements from_subset.
+    _class = type(dataset)
+    train_ds = _class.from_subset(train_ds)
+    val_ds = _class.from_subset(val_ds)
+    calibration_ds = _class.from_subset(calibration_ds)
+    test_ds = _class.from_subset(test_ds)
+
+    if isinstance(model, MultitaskMLPWithQRegression):
+        logger.info("Normalising regression targets...")
+        mean, std = train_ds.normalise_continuous()
+        _, _ = val_ds.normalise_continuous(mean, std)
+        _, _ = calibration_ds.normalise_continuous(mean, std)
+        _, _ = test_ds.normalise_continuous(mean, std)
+        # Save normalization stats for later use in evaluation
+        norm_stats = {
+            "mean": mean,
+            "std": std
+        }
+        norm_stats_path = split_dir / "normalization.json"
+        with open(norm_stats_path, "w", encoding="utf-8") as f:
+            json.dump(norm_stats, f)
+        logger.info(f"Saved normalization stats to {norm_stats_path}")
+
+
+    # Modify output path to include split hash as final directory
+    output_path = output_path.parent / split_hash / output_path.name
+
+    logger.info(f"Training with output path: {output_path}...")
     train(
         model=model,
         train_dataset=train_ds,

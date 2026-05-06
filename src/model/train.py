@@ -7,10 +7,10 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset, Subset
 
-from neural_net.model import MultitaskMLP, categorical_sizes_from_df
+from model.model import MultitaskMLP, categorical_sizes_from_df
 from loguru import logger
 
-from neural_net.logging import create_progress_bar, update_progress_bar
+from model.logging import create_progress_bar, update_progress_bar
 
 # Loss
 
