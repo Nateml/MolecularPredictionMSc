@@ -97,6 +97,7 @@ def main():
     calibration_ds = _class.from_subset(calibration_ds)
     test_ds = _class.from_subset(test_ds)
 
+    norm_stats = None
     if isinstance(model, MultitaskMLPWithQRegression):
         logger.info("Normalising regression targets...")
         mean, std = train_ds.normalise_continuous()
@@ -126,6 +127,7 @@ def main():
         batch_size=config.training.batch_size,
         lr=config.training.learning_rate,
         output_path=output_path,
+        continuous_stats=norm_stats if isinstance(model, MultitaskMLPWithQRegression) else None,
     )
 
 

@@ -143,6 +143,7 @@ def train(
     device: Optional[torch.device] = None,
     pos_weight: Optional[torch.Tensor] = None,
     output_path: Optional[Path] = None,
+    continuous_stats: Optional[dict] = None,
 ) -> MultitaskMLP:
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -187,7 +188,8 @@ def train(
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "categorical_sizes": model.categorical_sizes,
-            "maccs_length": model.num_binary
+            "maccs_length": model.num_binary,
+            **(continuous_stats or {}),
         }
         if checkpoint_path_latest:
             torch.save(latest_ckpt, checkpoint_path_latest)
@@ -200,7 +202,8 @@ def train(
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(),
                 "categorical_sizes": model.categorical_sizes,
-                "maccs_length": model.num_binary
+                "maccs_length": model.num_binary,
+                **(continuous_stats or {}),
             }
             torch.save(best_ckpt, output_path.with_suffix('.best.pt'))
 

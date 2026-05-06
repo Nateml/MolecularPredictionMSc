@@ -16,6 +16,7 @@ be normalised — the model normalises internally).
 from __future__ import annotations
 
 import argparse
+import itertools
 import sys
 from pathlib import Path
 
@@ -67,6 +68,7 @@ def load_model(checkpoint_path: Path):
 
     The dataset is constructed purely for its schema attributes (maccs_length,
     feature orders, edges) — no records are loaded from disk.
+    Applies saved continuous normalization stats to the dataset when present.
     """
     data_path = config.data.resolved_dataset_path()
     schema_path = config.data.resolved_schema_path()
@@ -79,7 +81,6 @@ def load_model(checkpoint_path: Path):
 
     # Build model from checkpoint metadata so architecture matches exactly
     # regardless of current config.yaml values.
-    # shape matches exactly regardless of current config.yaml values.
     if isinstance(dataset, RawFeatureDataset):
         model = MultitaskMLPWithQRegression(
             spectrum_len=config.model.spectrum_length,
@@ -91,6 +92,11 @@ def load_model(checkpoint_path: Path):
             regression_hidden_dim=config.model.regression_hidden_dim,
             dropout=config.model.dropout,
         )
+        # Restore normalization so quantile outputs can be inverted
+        cont_mean = ckpt.get("continuous_mean")
+        cont_std = ckpt.get("continuous_std")
+        if cont_mean is not None and cont_std is not None:
+            dataset.normalise_continuous(cont_mean, cont_std)
     else:
         model = MultitaskMLP(
             spectrum_len=config.model.spectrum_length,
@@ -161,20 +167,54 @@ def _categorical_predictions(
 def _atom_counts_from_quantiles(
     quantile_list: list[torch.Tensor],
     feature_order: list[str],
+    cont_mean: torch.Tensor | None,
+    cont_std: torch.Tensor | None,
 ) -> dict[str, int]:
     """Extract atom counts from quantile head outputs.
 
-    Takes the median quantile (middle index) for element_* features and
-    rounds to the nearest non-negative integer.
+    Takes the median quantile for element_* features, inverts z-score normalization
+    if stats are available, then rounds to the nearest non-negative integer.
     """
     counts = {k: 0 for k in _ALL_COUNT_KEYS}
     mid = len(quantile_list[0].tolist()) // 2  # median quantile index
-    for quantiles, feature in zip(quantile_list, feature_order):
+    for feat_idx, (quantiles, feature) in enumerate(zip(quantile_list, feature_order)):
         count_key = _ELEMENT_TO_COUNT_KEY.get(feature)
         if count_key is None:
             continue
-        counts[count_key] = max(0, round(quantiles[mid].item()))
+        val = quantiles[mid].item()
+        if cont_std is not None and cont_mean is not None:
+            val = val * cont_std[feat_idx].item() + cont_mean[feat_idx].item()
+        counts[count_key] = max(0, round(val))
     return counts
+
+
+def _atom_count_ranges_from_quantiles(
+    quantile_list: list[torch.Tensor],
+    feature_order: list[str],
+    cont_mean: torch.Tensor | None,
+    cont_std: torch.Tensor | None,
+) -> dict[str, tuple[int, int]]:
+    """Return inclusive integer [lo, hi] ranges for each atom count from quantile outputs.
+
+    Uses the lowest and highest quantile outputs as the bounds, unnormalizing
+    with z-score stats when available.
+    """
+    ranges: dict[str, tuple[int, int]] = {k: (0, 0) for k in _ALL_COUNT_KEYS}
+    for feat_idx, (quantiles, feature) in enumerate(zip(quantile_list, feature_order)):
+        count_key = _ELEMENT_TO_COUNT_KEY.get(feature)
+        if count_key is None:
+            continue
+        q_vals = quantiles.tolist()
+        lo_val, hi_val = q_vals[0], q_vals[-1]
+        if cont_std is not None and cont_mean is not None:
+            m = cont_mean[feat_idx].item()
+            s = cont_std[feat_idx].item()
+            lo_val = lo_val * s + m
+            hi_val = hi_val * s + m
+        lo = max(0, round(lo_val))
+        hi = max(lo, round(hi_val))
+        ranges[count_key] = (lo, hi)
+    return ranges
 
 
 def _atom_counts_from_categorical(
@@ -194,40 +234,38 @@ def _atom_counts_from_categorical(
     return counts
 
 
-def predictions_to_interface(
-    outputs: dict,
-    dataset,
-    threshold: float,
-) -> PredictionInterface:
-    """Convert raw model outputs to a PredictionInterface."""
+def _structural_entries(outputs: dict, dataset, threshold: float) -> dict:
+    """Binary + categorical structural entries, without atom counts."""
     entries: dict = {}
-
-    # MACCS binary features
     entries.update(_binary_predictions(outputs["binary"].squeeze(0), threshold))
-
-    is_raw = isinstance(dataset, RawFeatureDataset)
-
-    # Structural categorical features
-    cat_logits = [t.squeeze(0) for t in outputs["categorical"]]
-    if is_raw:
+    if isinstance(dataset, RawFeatureDataset):
+        cat_logits = [t.squeeze(0) for t in outputs["categorical"]]
         entries.update(_categorical_predictions(
             cat_logits,
             dataset.onehot_feature_order,
             dataset.onehot_feature_edges,
             threshold,
         ))
-        # Atom counts from quantile heads
+    return entries
+
+
+def predictions_to_interface(
+    outputs: dict,
+    dataset,
+    threshold: float,
+) -> PredictionInterface:
+    """Convert raw model outputs to a PredictionInterface (single median-count combination)."""
+    entries = _structural_entries(outputs, dataset, threshold)
+    if isinstance(dataset, RawFeatureDataset):
         q_logits = [t.squeeze(0) for t in outputs["quantile"]]
-        counts = _atom_counts_from_quantiles(q_logits, dataset.continuous_feature_order)
+        counts = _atom_counts_from_quantiles(
+            q_logits, dataset.continuous_feature_order,
+            cont_mean=dataset._cont_mean, cont_std=dataset._cont_std,
+        )
     else:
+        cat_logits = [t.squeeze(0) for t in outputs["categorical"]]
         counts = _atom_counts_from_categorical(cat_logits, dataset.onehot_feature_order)
-
-    # Require all four base atom counts; warn and default to 0 if missing
-    for k in _REQUIRED_COUNT_KEYS:
-        if counts.get(k, 0) == 0 and k not in _ELEMENT_TO_COUNT_KEY.values():
-            pass  # already 0
     entries.update(counts)
-
     return PredictionInterface.model_validate(entries)
 
 
@@ -288,35 +326,66 @@ def main() -> None:
     with torch.no_grad():
         outputs = model(x)
 
-    # Convert to PredictionInterface
-    interface = predictions_to_interface(outputs, dataset, threshold=args.threshold)
+    # Build structural constraints (binary + categorical) shared across all count combos
+    structural = _structural_entries(outputs, dataset, threshold=args.threshold)
 
-    # Compile ASP constraints
-    asp_constraints, atom_counts = compile_asp_constraint(interface)
+    is_raw = isinstance(dataset, RawFeatureDataset)
+    if is_raw:
+        q_logits = [t.squeeze(0) for t in outputs["quantile"]]
+        count_ranges = _atom_count_ranges_from_quantiles(
+            q_logits, dataset.continuous_feature_order,
+            cont_mean=dataset._cont_mean, cont_std=dataset._cont_std,
+        )
+        count_keys = list(count_ranges.keys())
+        n_combos = 1
+        for lo, hi in count_ranges.values():
+            n_combos *= (hi - lo + 1)
+        combo_iter = (
+            dict(zip(count_keys, combo))
+            for combo in itertools.product(
+                *[range(lo, hi + 1) for lo, hi in count_ranges.values()]
+            )
+        )
+        print("Atom count ranges:")
+        for k, (lo, hi) in count_ranges.items():
+            print(f"  {k}: [{lo}, {hi}]")
+    else:
+        cat_logits = [t.squeeze(0) for t in outputs["categorical"]]
+        single_counts = _atom_counts_from_categorical(cat_logits, dataset.onehot_feature_order)
+        if all(v == 0 for v in single_counts.values()):
+            print("Warning: all atom counts predicted as 0. Model may not be trained yet.", file=sys.stderr)
+        print(f"Predicted formula: C{single_counts.get('num_carbons', 0)}"
+              f"H{single_counts.get('num_hydrogens', 0)}"
+              f"N{single_counts.get('num_nitrogens', 0)}"
+              f"O{single_counts.get('num_oxygens', 0)}")
+        combo_iter = iter([single_counts])
+        n_combos = 1
 
-    if args.show_constraints:
-        print("\nAtom counts:", atom_counts)
-        print("\nASP constraints:")
-        for c in asp_constraints:
-            print(" ", c)
-        print()
+    print(f"Solving {n_combos} formula combination(s)...")
 
-    if all(v == 0 for v in atom_counts.values()):
-        print("Warning: all atom counts predicted as 0. Model may not be trained yet.", file=sys.stderr)
-
-    print(f"Predicted formula: C{atom_counts.get('num_carbons', 0)}"
-          f"H{atom_counts.get('num_hydrogens', 0)}"
-          f"N{atom_counts.get('num_nitrogens', 0)}"
-          f"O{atom_counts.get('num_oxygens', 0)}")
-    print("Solving...")
-
-    candidates, n = solve(asp_constraints, atom_counts, output_list_of_smiles=True)
+    all_candidates: list[str] = []
+    seen: set[str] = set()
+    for count_dict in combo_iter:
+        interface = PredictionInterface.model_validate({**structural, **count_dict})
+        asp_constraints, atom_counts = compile_asp_constraint(interface)
+        if args.show_constraints:
+            print(f"\n  formula: C{atom_counts.get('num_carbons',0)}"
+                  f"H{atom_counts.get('num_hydrogens',0)}"
+                  f"N{atom_counts.get('num_nitrogens',0)}"
+                  f"O{atom_counts.get('num_oxygens',0)}")
+            for c in asp_constraints:
+                print(f"    {c}")
+        cands, _ = solve(asp_constraints, atom_counts, output_list_of_smiles=True)
+        for smi in cands:
+            if smi not in seen:
+                seen.add(smi)
+                all_candidates.append(smi)
 
     if args.max_candidates:
-        candidates = candidates[:args.max_candidates]
+        all_candidates = all_candidates[:args.max_candidates]
 
-    print(f"\nFound {n} candidate(s):")
-    for i, smi in enumerate(candidates, 1):
+    print(f"\nFound {len(all_candidates)} unique candidate(s) across {n_combos} formula(s):")
+    for i, smi in enumerate(all_candidates, 1):
         print(f"  {i}. {smi}")
 
 
