@@ -79,7 +79,14 @@ def main() -> None:
         "calibration": CALIBRATION_FRACTION,
         "test": TEST_FRACTION,
     }
-    split_dir = splits_dir(data_path, schema_path, fractions, SEED)
+
+    ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+    split_hash = ckpt.get("split_hash", None)
+    if split_hash:
+        split_dir = data_path.parent / "splits" / split_hash
+    else:
+        print("Warning: No split hash found in checkpoint. Attempting to find splits by data/schema/fraction config, but this may fail if the splits were generated with different config or code version.", file=sys.stderr)
+        split_dir = splits_dir(data_path, schema_path, fractions, SEED)
 
     if not splits_exist(split_dir):
         print(

@@ -133,6 +133,14 @@ def main():
         continuous_stats=norm_stats if isinstance(model, MultitaskMLPWithQRegression) else None,
     )
 
+    # Patch checkpoints with split hash
+    for suffix in (".best.pt", ".latest.pt"):
+        p = output_path.with_suffix(suffix)
+        if p.exists():
+            ckpt = torch.load(p, map_location="cpu", weights_only=True)
+            ckpt["split_hash"] = split_hash
+            torch.save(ckpt, p)
+
     logger.info("Computing conformal thresholds from calibration set...")
     calib_loader = DataLoader(calibration_ds, batch_size=config.training.batch_size, shuffle=False)
     thresholds = calibrate_model(model, calib_loader, alpha=config.conformal.alpha)
