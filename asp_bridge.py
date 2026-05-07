@@ -20,27 +20,36 @@ def min_main_chain_len(n):
     )
 
 
-def solve(asp_code: list[str], atom_counts: int, output_list_of_smiles: bool = False, debug=False) -> typing.Tuple[str, int]:
+def solve(asp_code: list[str], atom_counts: int, output_list_of_smiles: bool = False, debug=False, timeout: int = 0, mem_limit: int = 0) -> typing.Tuple[str, int]:
     """
     Runs the ASP program with the given input and returns the results.
 
     Args:
         asp_code (list[str]): A list of strings representing additional ASP code
-        min_num_atoms (int): Minimum number of atoms in the generated molecules
+        atom_counts (dict): Atom count constraints for the formula
+        output_list_of_smiles (bool): If True, return list of SMILES strings
+        debug (bool): If True, print debug information
+        timeout (int): Wall-clock time limit in seconds for the solve phase (0 = no limit)
+        mem_limit (int): Memory limit in MB (0 = no limit)
 
     Returns:
         list: A list of candidate molecules returned by the ASP program
     """
 
-    ctl = clingo.Control([
+    flags = [
         '0',
-        f'-c c={atom_counts['num_carbons']}',
-        f'-c h={atom_counts['num_hydrogens']}',
-        f'-c n={atom_counts['num_nitrogens']}',
-        f'-c o={atom_counts['num_oxygens']}',
-        f'-c s={atom_counts['num_sulfurs']}',
-        f'-c p={atom_counts['num_phosphorus']}',
-        ])
+        f'-c c={atom_counts["num_carbons"]}',
+        f'-c h={atom_counts["num_hydrogens"]}',
+        f'-c n={atom_counts["num_nitrogens"]}',
+        f'-c o={atom_counts["num_oxygens"]}',
+        f'-c s={atom_counts["num_sulfurs"]}',
+        f'-c p={atom_counts["num_phosphorus"]}',
+    ]
+    if timeout > 0:
+        flags.append(f'--time-limit={timeout}')
+    if mem_limit > 0:
+        flags.append(f'--mem-limit={mem_limit}')
+    ctl = clingo.Control(flags)
 
 
     k = min_main_chain_len(sum(atom_counts.values()) - atom_counts['num_hydrogens'])
@@ -66,14 +75,18 @@ def solve(asp_code: list[str], atom_counts: int, output_list_of_smiles: bool = F
 
     model_count = 0
     output = ""
+    timed_out = False
     with ctl.solve(yield_=True) as handle:
         for i, model in enumerate(handle, start=1):
             model_count += 1
-
             output += f"Answer: {i}\n"
-
             atoms = model.symbols(shown=True)
             output += " ".join(map(str, atoms)) + "\n"
+        timed_out = not handle.get().exhausted
+
+    if timed_out:
+        import sys as _sys
+        print(f"Warning: ASP solve timed out after {timeout}s; results may be incomplete.", file=_sys.stderr)
 
     output += "SATISFIABLE\n"
 

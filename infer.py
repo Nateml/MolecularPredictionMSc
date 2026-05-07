@@ -59,6 +59,8 @@ _PREDICATE_TO_FVD_KEY: dict[str, int] = {
     v["predicate"]: k for k, v in FEATURE_VECTOR_DEFINITIONS.items()
 }
 
+COMBINATION_WARNING_THRESHOLD = 100
+
 
 # ---------------------------------------------------------------------------
 # Model loading
@@ -372,6 +374,14 @@ def parse_args() -> argparse.Namespace:
         "--show-constraints", action="store_true",
         help="Print compiled ASP constraints before solving",
     )
+    p.add_argument(
+        "--solve-timeout", type=int, default=config.solver.timeout,
+        help=f"Wall-clock time limit in seconds for each ASP solve call (0 = no limit, default: {config.solver.timeout})",
+    )
+    p.add_argument(
+        "--solve-mem-limit", type=int, default=config.solver.mem_limit,
+        help=f"Memory limit in MB for each ASP solve call (0 = no limit, default: {config.solver.mem_limit})",
+    )
     return p.parse_args()
 
 
@@ -458,7 +468,14 @@ def main() -> None:
         combo_iter = iter([single_counts])
         n_combos = 1
 
-    print(f"Solving {n_combos} formula combination(s)...")
+    print(f"{n_combos} formula combination(s) to solve based on predicted atom count ranges." if count_ranges else "Using single predicted formula based on categorical head.")
+    if n_combos > COMBINATION_WARNING_THRESHOLD:
+        print(f"Warning: {n_combos} formula combinations to solve. This may take a long time.", file=sys.stderr)
+        print("Do you want to continue? [y/N]", file=sys.stderr)
+        choice = input().lower()
+        if choice != 'y':
+            print("Aborting.")
+            sys.exit(0)
 
     all_candidates: list[str] = []
     seen: set[str] = set()
@@ -472,7 +489,7 @@ def main() -> None:
                   f"O{atom_counts.get('num_oxygens',0)}")
             for c in asp_constraints:
                 print(f"    {c}")
-        cands, _ = solve(asp_constraints, atom_counts, output_list_of_smiles=True)
+        cands, _ = solve(asp_constraints, atom_counts, output_list_of_smiles=True, timeout=args.solve_timeout, mem_limit=args.solve_mem_limit)
         for smi in cands:
             if smi not in seen:
                 seen.add(smi)

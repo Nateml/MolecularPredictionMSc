@@ -21,3 +21,7 @@ checkpointing:
 
 conformal:
   alpha: 0.1
+
+solver:
+  timeout: 30
+  mem_limit: 512

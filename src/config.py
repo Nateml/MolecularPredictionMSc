@@ -45,12 +45,18 @@ class ConformalConfig(BaseModel):
     alpha: float = 0.1  # miscoverage level; target coverage = 1 - alpha
 
 
+class SolverConfig(BaseModel):
+    timeout: int = 30   # wall-clock seconds per ASP solve call; 0 = no limit
+    mem_limit: int = 512  # MB per ASP solve call; 0 = no limit
+
+
 class Config(BaseModel):
     model: ModelConfig = ModelConfig()
     training: TrainingConfig = TrainingConfig()
     data: DataConfig
     checkpointing: CheckpointingConfig = CheckpointingConfig()
     conformal: ConformalConfig = ConformalConfig()
+    solver: SolverConfig = SolverConfig()
 
 
 def load_config(path: Path | str | None = None) -> Config:
