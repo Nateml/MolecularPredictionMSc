@@ -20,7 +20,7 @@ def min_main_chain_len(n):
     )
 
 
-def solve(asp_code: list[str], atom_counts: int, output_list_of_smiles: bool = False, debug=False, timeout: int = 0, mem_limit: int = 0) -> typing.Tuple[str, int]:
+def solve(asp_code: list[str], atom_counts: int, output_list_of_smiles: bool = False, debug=False, timeout: int = 0) -> typing.Tuple[str, int]:
     """
     Runs the ASP program with the given input and returns the results.
 
@@ -30,7 +30,6 @@ def solve(asp_code: list[str], atom_counts: int, output_list_of_smiles: bool = F
         output_list_of_smiles (bool): If True, return list of SMILES strings
         debug (bool): If True, print debug information
         timeout (int): Wall-clock time limit in seconds for the solve phase (0 = no limit)
-        mem_limit (int): Memory limit in MB (0 = no limit)
 
     Returns:
         list: A list of candidate molecules returned by the ASP program
@@ -46,9 +45,7 @@ def solve(asp_code: list[str], atom_counts: int, output_list_of_smiles: bool = F
         f'-c p={atom_counts["num_phosphorus"]}',
     ]
     if timeout > 0:
-        flags.append(f'--time-limit={timeout}')
-    if mem_limit > 0:
-        flags.append(f'--mem-limit={mem_limit}')
+        flags.append(f'-t {timeout}')   # wall-clock time limit (clingo 5.x)
     ctl = clingo.Control(flags)
 
 
@@ -84,7 +81,7 @@ def solve(asp_code: list[str], atom_counts: int, output_list_of_smiles: bool = F
             output += " ".join(map(str, atoms)) + "\n"
         timed_out = not handle.get().exhausted
 
-    if timed_out:
+    if timed_out and timeout > 0:
         import sys as _sys
         print(f"Warning: ASP solve timed out after {timeout}s; results may be incomplete.", file=_sys.stderr)
 

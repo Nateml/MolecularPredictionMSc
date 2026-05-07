@@ -30,7 +30,7 @@ from config import config
 from data.datasets import dataset_from_schema, RawFeatureDataset
 from model.model import MultitaskMLP, MultitaskMLPWithQRegression
 from model.conformal import sets_from_outputs
-from predicates.definitions import MACCS_DEFINITIONS, FEATURE_VECTOR_DEFINITIONS
+from predicates.definitions import MACCS_DEFINITIONS, FEATURE_VECTOR_DEFINITIONS, FEATURE_VECTOR_DEFINITIONS_CONTINUOUS
 from predicates.interface import PredictionInterface, PredictionEntry
 from predicates.compiler import compile_asp_constraint
 from asp_bridge import solve
@@ -60,6 +60,42 @@ _PREDICATE_TO_FVD_KEY: dict[str, int] = {
 }
 
 COMBINATION_WARNING_THRESHOLD = 100
+
+
+# ---------------------------------------------------------------------------
+# Spectrum parsing
+# ---------------------------------------------------------------------------
+
+def parse_spectrum(text: str) -> str:
+    """Normalise spectrum text to "mz:intensity ..." format.
+
+    Accepts:
+      - Native format:   "100:0.5 200:1.0 ..."  (pass-through)
+      - MassBank/NIST:   whitespace-separated rows "mz intensity [rel_intensity]"
+                         with optional "PK$PEAK: ..." header line
+    Returns space-joined "mz:intensity" pairs.
+    """
+    text = text.strip()
+    if ":" in text.split()[0]:
+        return text  # already native format
+
+    pairs = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or line.upper().startswith("PK$"):
+            continue
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        try:
+            mz = float(parts[0])
+            intensity = float(parts[1])
+        except ValueError:
+            continue
+        pairs.append(f"{mz}:{intensity}")
+    if not pairs:
+        raise ValueError("No valid peaks found in spectrum input.")
+    return " ".join(pairs)
 
 
 # ---------------------------------------------------------------------------
@@ -252,6 +288,64 @@ def _structural_entries(outputs: dict, dataset, threshold: float) -> dict:
     return entries
 
 
+def _continuous_range_constraints(
+    lo_vals: dict[str, float],
+    hi_vals: dict[str, float],
+) -> list[str]:
+    """ASP numeric range rules from denormalized continuous feature bounds."""
+    rules = []
+    for feature, lo_val in lo_vals.items():
+        entry = FEATURE_VECTOR_DEFINITIONS_CONTINUOUS.get(feature)
+        if entry is None:
+            continue
+        pred = entry["predicate"]
+        lo = max(0, round(lo_val))
+        hi = max(lo, round(hi_vals[feature]))
+        rules.append(entry["definition"])
+        rules.append(f":- {pred}(N), N < {lo}.")
+        rules.append(f":- {pred}(N), N > {hi}.")
+    return rules
+
+
+def _continuous_constraints_from_median(
+    quantile_list: list[torch.Tensor],
+    feature_order: list[str],
+    cont_mean: torch.Tensor | None,
+    cont_std: torch.Tensor | None,
+) -> list[str]:
+    mid = len(quantile_list[0].tolist()) // 2
+    lo_vals: dict[str, float] = {}
+    for feat_idx, (quantiles, feature) in enumerate(zip(quantile_list, feature_order)):
+        val = quantiles[mid].item()
+        if cont_std is not None and cont_mean is not None:
+            val = val * cont_std[feat_idx].item() + cont_mean[feat_idx].item()
+        lo_vals[feature] = val
+    return _continuous_range_constraints(lo_vals, lo_vals)
+
+
+def _continuous_constraints_from_intervals(
+    quantile_sets: torch.Tensor,
+    feature_order: list[str],
+    cont_mean: torch.Tensor | None,
+    cont_std: torch.Tensor | None,
+) -> list[str]:
+    lo_vals: dict[str, float] = {}
+    hi_vals: dict[str, float] = {}
+    for feat_idx, feature in enumerate(feature_order):
+        if feat_idx >= quantile_sets.shape[0]:
+            break
+        lo_n = quantile_sets[feat_idx, 0].item()
+        hi_n = quantile_sets[feat_idx, 1].item()
+        if cont_std is not None and cont_mean is not None:
+            m = cont_mean[feat_idx].item()
+            s = cont_std[feat_idx].item()
+            lo_n = lo_n * s + m
+            hi_n = hi_n * s + m
+        lo_vals[feature] = lo_n
+        hi_vals[feature] = hi_n
+    return _continuous_range_constraints(lo_vals, hi_vals)
+
+
 def load_thresholds(checkpoint_path: Path) -> dict | None:
     """Load conformal thresholds saved alongside a checkpoint, or None if absent."""
     path = checkpoint_path.parent / "conformal_thresholds.pt"
@@ -354,8 +448,14 @@ def parse_args() -> argparse.Namespace:
         epilog=__doc__,
     )
     p.add_argument(
-        "--spectrum", required=True,
-        help='Space-separated "mz:intensity" pairs, e.g. "100:0.5 200:1.0"',
+        "--spectrum", default=None,
+        help='Space-separated "mz:intensity" pairs, e.g. "100:0.5 200:1.0". '
+             'Also accepts MassBank/NIST whitespace-separated "mz intensity" rows.',
+    )
+    p.add_argument(
+        "--spectrum-file", default=None, metavar="FILE",
+        help='Read spectrum from FILE (use "-" for stdin). '
+             'Accepts MassBank copy-paste (mz intensity rows) or native "mz:intensity" format.',
     )
     p.add_argument(
         "--checkpoint",
@@ -365,6 +465,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--threshold", type=float, default=0.5,
         help="Confidence threshold for including a binary/categorical prediction as a constraint (default: 0.5)",
+    )
+    p.add_argument(
+        "--use-median-counts", action="store_true",
+        help="Use median quantile predictions for atom counts instead of categorical head argmax (only applies to RawFeatureDataset models)",
     )
     p.add_argument(
         "--max-candidates", type=int, default=None,
@@ -377,10 +481,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--solve-timeout", type=int, default=config.solver.timeout,
         help=f"Wall-clock time limit in seconds for each ASP solve call (0 = no limit, default: {config.solver.timeout})",
-    )
-    p.add_argument(
-        "--solve-mem-limit", type=int, default=config.solver.mem_limit,
-        help=f"Memory limit in MB for each ASP solve call (0 = no limit, default: {config.solver.mem_limit})",
     )
     return p.parse_args()
 
@@ -407,8 +507,22 @@ def main() -> None:
     else:
         print(f"No conformal thresholds found; using manual threshold={args.threshold}.")
 
+    # Load spectrum
+    if args.spectrum_file:
+        if args.spectrum_file == "-":
+            raw_spectrum = sys.stdin.read()
+        else:
+            raw_spectrum = Path(args.spectrum_file).read_text(encoding="utf-8")
+    elif args.spectrum:
+        raw_spectrum = args.spectrum
+    else:
+        print("Error: provide --spectrum or --spectrum-file.", file=sys.stderr)
+        sys.exit(1)
+
+    spectrum_str = parse_spectrum(raw_spectrum)
+
     # Preprocess spectrum
-    x = dataset._spectrum_to_dense(args.spectrum).unsqueeze(0).to(device)
+    x = dataset._spectrum_to_dense(spectrum_str).unsqueeze(0).to(device)
 
     # Forward pass
     with torch.no_grad():
@@ -417,6 +531,7 @@ def main() -> None:
     is_raw = isinstance(dataset, RawFeatureDataset)
 
     if thresholds is not None:
+        print("Using conformal prediction sets to derive constraints...")
         conf_sets = sets_from_outputs(outputs, thresholds)
         structural = _conformal_structural_entries(conf_sets, dataset)
         if is_raw and conf_sets["quantile"] is not None:
@@ -425,6 +540,7 @@ def main() -> None:
                 cont_mean=dataset._cont_mean, cont_std=dataset._cont_std,
             )
         elif is_raw:
+            # Fallback if for some reasong there are no conformal calibrated quantile sets
             q_logits = [t.squeeze(0) for t in outputs["quantile"]]
             count_ranges = _atom_count_ranges_from_quantiles(
                 q_logits, dataset.continuous_feature_order,
@@ -433,6 +549,7 @@ def main() -> None:
         else:
             count_ranges = None
     else:
+        print("Warning: no conformal thresholds found; using manual thresholding of raw outputs. ")
         structural = _structural_entries(outputs, dataset, threshold=args.threshold)
         count_ranges = None
         if is_raw:
@@ -442,7 +559,36 @@ def main() -> None:
                 cont_mean=dataset._cont_mean, cont_std=dataset._cont_std,
             )
 
-    if is_raw and count_ranges is not None:
+    # Continuous feature range constraints — computed once, appended to every combo's asp_constraints
+    if is_raw:
+        if thresholds is not None and conf_sets.get("quantile") is not None:
+            extra_constraints = _continuous_constraints_from_intervals(
+                conf_sets["quantile"].squeeze(0),
+                dataset.continuous_feature_order,
+                cont_mean=dataset._cont_mean, cont_std=dataset._cont_std,
+            )
+        else:
+            q_all = [t.squeeze(0) for t in outputs["quantile"]]
+            extra_constraints = _continuous_constraints_from_median(
+                q_all, dataset.continuous_feature_order,
+                cont_mean=dataset._cont_mean, cont_std=dataset._cont_std,
+            )
+    else:
+        extra_constraints = []
+
+    if args.use_median_counts and is_raw:
+        q_logits = [t.squeeze(0) for t in outputs["quantile"]]
+        single_counts = _atom_counts_from_quantiles(
+            q_logits, dataset.continuous_feature_order,
+            cont_mean=dataset._cont_mean, cont_std=dataset._cont_std,
+        )
+        print(f"Predicted formula (median): C{single_counts.get('num_carbons', 0)}"
+              f"H{single_counts.get('num_hydrogens', 0)}"
+              f"N{single_counts.get('num_nitrogens', 0)}"
+              f"O{single_counts.get('num_oxygens', 0)}")
+        combo_iter = iter([single_counts])
+        n_combos = 1
+    elif is_raw and count_ranges is not None:
         count_keys = list(count_ranges.keys())
         n_combos = 1
         for lo, hi in count_ranges.values():
@@ -468,12 +614,17 @@ def main() -> None:
         combo_iter = iter([single_counts])
         n_combos = 1
 
-    print(f"{n_combos} formula combination(s) to solve based on predicted atom count ranges." if count_ranges else "Using single predicted formula based on categorical head.")
+    print(f"{n_combos} formula combination(s) to solve." if n_combos > 1 else "Using single predicted formula.")
     if n_combos > COMBINATION_WARNING_THRESHOLD:
         print(f"Warning: {n_combos} formula combinations to solve. This may take a long time.", file=sys.stderr)
-        print("Do you want to continue? [y/N]", file=sys.stderr)
-        choice = input().lower()
-        if choice != 'y':
+        try:
+            with open("/dev/tty") as tty:
+                print("Do you want to continue? [y/N] ", end="", file=sys.stderr, flush=True)
+                choice = tty.readline().strip().lower()
+        except OSError:
+            print("Non-interactive mode; continuing automatically.", file=sys.stderr)
+            choice = "y"
+        if choice != "y":
             print("Aborting.")
             sys.exit(0)
 
@@ -482,6 +633,7 @@ def main() -> None:
     for count_dict in combo_iter:
         interface = PredictionInterface.model_validate({**structural, **count_dict})
         asp_constraints, atom_counts = compile_asp_constraint(interface)
+        asp_constraints = asp_constraints + extra_constraints
         if args.show_constraints:
             print(f"\n  formula: C{atom_counts.get('num_carbons',0)}"
                   f"H{atom_counts.get('num_hydrogens',0)}"
@@ -489,7 +641,7 @@ def main() -> None:
                   f"O{atom_counts.get('num_oxygens',0)}")
             for c in asp_constraints:
                 print(f"    {c}")
-        cands, _ = solve(asp_constraints, atom_counts, output_list_of_smiles=True, timeout=args.solve_timeout, mem_limit=args.solve_mem_limit)
+        cands, _ = solve(asp_constraints, atom_counts, output_list_of_smiles=True, timeout=args.solve_timeout)
         for smi in cands:
             if smi not in seen:
                 seen.add(smi)

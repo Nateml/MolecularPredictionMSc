@@ -10,6 +10,11 @@ class ASPPredicate(TypedDict):
     definition: str  # The actual predicate definition, e.g. "has_carbonyl :- ..."
     domain: Set[int]  # The set of possible values
 
+
+class ASPContinuousPredicate(TypedDict):
+    predicate: str  # helper predicate name, e.g. "ring_count" or "alcohol_count"
+    definition: str  # the helper predicate definition (ASP rule)
+
 # Definitions for helper predicates that are used by predicates defined in MACCS_DEFINITIONS and other predicates we may want to define. These are compiled into the ASP program by compiler.compile_asp_constraint.
 HELPER_PREDICATES: Dict[str, str] = {
     "is_multi_bond": """
@@ -5211,6 +5216,40 @@ FEATURE_VECTOR_DEFINITIONS: Dict[int, ASPPredicate] = {
         "domain": {0, 1}
     },
     
+}
+
+FEATURE_VECTOR_DEFINITIONS_CONTINUOUS: Dict[str, ASPContinuousPredicate] = {
+    "alcohol":                              {"predicate": "alcohol_count",                          "definition": HELPER_PREDICATES["alcohol_count"]},
+    "aliphatic_ring_count":                 {"predicate": "aliphatic_ring_count",                   "definition": HELPER_PREDICATES["aliphatic_ring_count"]},
+    "branch_point_count":                   {"predicate": "branch_point_count",                     "definition": HELPER_PREDICATES["branch_point_count"]},
+    "chiral_center_count":                  {"predicate": "chiral_center_count",                    "definition": HELPER_PREDICATES["chiral_center_count"]},
+    "degree_1_atom_count":                  {"predicate": "degree_1_atom_count",                    "definition": HELPER_PREDICATES["degree_1_atom_count"]},
+    "degree_2_atom_count":                  {"predicate": "degree_2_atom_count",                    "definition": HELPER_PREDICATES["degree_2_atom_count"]},
+    "degree_3_atom_count":                  {"predicate": "degree_3_atom_count",                    "definition": HELPER_PREDICATES["degree_3_atom_count"]},
+    "degree_4plus_atom_count":              {"predicate": "degree_4plus_atom_count",                "definition": HELPER_PREDICATES["degree_4plus_atom_count"]},
+    "degree_of_unsaturation":               {"predicate": "degree_of_unsaturation",                 "definition": HELPER_PREDICATES["degree_of_unsaturation"]},
+    "double_bond_count":                    {"predicate": "double_bond_count",                      "definition": HELPER_PREDICATES["double_bond_count"]},
+    "ester":                                {"predicate": "ester_count",                            "definition": HELPER_PREDICATES["ester_count"]},
+    "ether":                                {"predicate": "ether_count",                            "definition": HELPER_PREDICATES["ether_count"]},
+    "exact_mass_da":                        {"predicate": "exact_mass_da",                          "definition": HELPER_PREDICATES["exact_mass_da"]},
+    "heavy_atom_count":                     {"predicate": "heavy_atom_count",                       "definition": HELPER_PREDICATES["heavy_atom_count"]},
+    "heteroatom_count":                     {"predicate": "heteroatom_count",                       "definition": HELPER_PREDICATES["heteroatom_count"]},
+    "heteroatom_exocyclic_count":           {"predicate": "heteroatom_exocyclic_count",             "definition": HELPER_PREDICATES["heteroatom_exocyclic_count"]},
+    "heteroatom_in_ring_count":             {"predicate": "heteroatom_in_ring_count",               "definition": HELPER_PREDICATES["heteroatom_in_ring_count"]},
+    "molecular_weight_da":                  {"predicate": "molecular_weight_da",                    "definition": HELPER_PREDICATES["molecular_weight_da"]},
+    "n_valence_4plus_count":                {"predicate": "n_valence_4plus_count",                  "definition": HELPER_PREDICATES["n_valence_4plus_count"]},
+    "o_valence_1_count":                    {"predicate": "o_valence_1_count",                      "definition": HELPER_PREDICATES["o_valence_1_count"]},
+    "o_valence_2_count":                    {"predicate": "o_valence_2_count",                      "definition": HELPER_PREDICATES["o_valence_2_count"]},
+    "p_valence_5plus_count":                {"predicate": "p_valence_5plus_count",                  "definition": HELPER_PREDICATES["p_valence_5plus_count"]},
+    "phosphate":                            {"predicate": "phosphate_count",                        "definition": HELPER_PREDICATES["phosphate_count"]},
+    "ring_count":                           {"predicate": "ring_count",                             "definition": HELPER_PREDICATES["ring_count"]},
+    "ring_size_6_count":                    {"predicate": "ring_size_6_count",                      "definition": HELPER_PREDICATES["ring_size_6_count"]},
+    "ring_system_count":                    {"predicate": "ring_system_count",                      "definition": HELPER_PREDICATES["ring_system_count"]},
+    "rotatable_bond_count":                 {"predicate": "rotatable_bond_count",                   "definition": HELPER_PREDICATES["rotatable_bond_count"]},
+    "stereo_double_bond_Z_count":           {"predicate": "stereo_double_bond_Z_count",             "definition": HELPER_PREDICATES["stereo_double_bond_Z_count"]},
+    "stereo_double_bond_unspecified_count": {"predicate": "stereo_double_bond_unspecified_count",   "definition": HELPER_PREDICATES["stereo_double_bond_unspecified_count"]},
+    "total_atom_count_with_h":              {"predicate": "total_atom_count_with_h",                "definition": HELPER_PREDICATES["total_atom_count_with_h"]},
+    "unassigned_chiral_center_count":       {"predicate": "unassigned_chiral_center_count",         "definition": HELPER_PREDICATES["unassigned_chiral_center_count"]},
 }
 
 COUNT_KEYS = ['num_carbons', 'num_hydrogens', 'num_nitrogens', 'num_oxygens', 'num_sulfurs', 'num_phosphorus']

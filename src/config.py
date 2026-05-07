@@ -46,8 +46,7 @@ class ConformalConfig(BaseModel):
 
 
 class SolverConfig(BaseModel):
-    timeout: int = 30   # wall-clock seconds per ASP solve call; 0 = no limit
-    mem_limit: int = 512  # MB per ASP solve call; 0 = no limit
+    timeout: int = 30  # wall-clock seconds per ASP solve call; 0 = no limit
 
 
 class Config(BaseModel):

@@ -23,5 +23,4 @@ conformal:
   alpha: 0.1
 
 solver:
-  timeout: 30
-  mem_limit: 512
+  timeout: 10
