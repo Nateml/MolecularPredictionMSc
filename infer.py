@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from config import config
 from data.datasets import dataset_from_schema, RawFeatureDataset
 from model.model import MultitaskMLP, MultitaskMLPWithQRegression
+from model.conformal import sets_from_outputs
 from predicates.definitions import MACCS_DEFINITIONS, FEATURE_VECTOR_DEFINITIONS
 from predicates.interface import PredictionInterface, PredictionEntry
 from predicates.compiler import compile_asp_constraint
@@ -249,6 +250,77 @@ def _structural_entries(outputs: dict, dataset, threshold: float) -> dict:
     return entries
 
 
+def load_thresholds(checkpoint_path: Path) -> dict | None:
+    """Load conformal thresholds saved alongside a checkpoint, or None if absent."""
+    path = checkpoint_path.parent / "conformal_thresholds.pt"
+    if path.exists():
+        return torch.load(path, map_location="cpu", weights_only=True)
+    return None
+
+
+def _conformal_structural_entries(sets: dict, dataset) -> dict:
+    """Binary + categorical structural entries derived from conformal prediction sets.
+
+    Singleton sets → hard constraint. Ambiguous sets (both classes included) → no constraint.
+    """
+    entries: dict = {}
+
+    binary_sets = sets["binary"].squeeze(0)  # (num_binary, 2)
+    for i in range(binary_sets.shape[0]):
+        if i not in MACCS_DEFINITIONS:
+            continue
+        inc_0 = binary_sets[i, 0].item()
+        inc_1 = binary_sets[i, 1].item()
+        if inc_1 and not inc_0:
+            entries[i] = PredictionEntry(pred_set=[1], proba=[1.0])
+        elif inc_0 and not inc_1:
+            entries[i] = PredictionEntry(pred_set=[0], proba=[1.0])
+
+    if isinstance(dataset, RawFeatureDataset):
+        for cat_set, feature in zip(sets["categorical"], dataset.onehot_feature_order):
+            included = cat_set.squeeze(0).nonzero(as_tuple=False).squeeze(-1).tolist()
+            if len(included) == 1:
+                predicate_name = f"{feature}_bin_{included[0]}"
+                key = _PREDICATE_TO_FVD_KEY.get(predicate_name)
+                if key is not None:
+                    entries[key] = PredictionEntry(pred_set=[1], proba=[1.0])
+
+    return entries
+
+
+def _conformal_atom_count_ranges(
+    sets: dict,
+    feature_order: list[str],
+    cont_mean: torch.Tensor | None,
+    cont_std: torch.Tensor | None,
+) -> dict[str, tuple[int, int]]:
+    """Atom count [lo, hi] ranges from conformal quantile intervals.
+
+    Intervals are in normalized space; unnormalizes before rounding.
+    """
+    ranges: dict[str, tuple[int, int]] = {k: (0, 0) for k in _ALL_COUNT_KEYS}
+    if sets["quantile"] is None:
+        return ranges
+    quantile_sets = sets["quantile"].squeeze(0)  # (F, 2)
+    for feat_idx, feature in enumerate(feature_order):
+        count_key = _ELEMENT_TO_COUNT_KEY.get(feature)
+        if count_key is None:
+            continue
+        lo_norm = quantile_sets[feat_idx, 0].item()
+        hi_norm = quantile_sets[feat_idx, 1].item()
+        if cont_std is not None and cont_mean is not None:
+            m = cont_mean[feat_idx].item()
+            s = cont_std[feat_idx].item()
+            lo_val = lo_norm * s + m
+            hi_val = hi_norm * s + m
+        else:
+            lo_val, hi_val = lo_norm, hi_norm
+        lo = max(0, round(lo_val))
+        hi = max(lo, round(hi_val))
+        ranges[count_key] = (lo, hi)
+    return ranges
+
+
 def predictions_to_interface(
     outputs: dict,
     dataset,
@@ -319,6 +391,12 @@ def main() -> None:
     print(f"Loading model from {checkpoint_path}...")
     model, dataset, device = load_model(checkpoint_path)
 
+    thresholds = load_thresholds(checkpoint_path)
+    if thresholds is not None:
+        print(f"Conformal thresholds loaded (alpha={config.conformal.alpha}).")
+    else:
+        print(f"No conformal thresholds found; using manual threshold={args.threshold}.")
+
     # Preprocess spectrum
     x = dataset._spectrum_to_dense(args.spectrum).unsqueeze(0).to(device)
 
@@ -326,16 +404,35 @@ def main() -> None:
     with torch.no_grad():
         outputs = model(x)
 
-    # Build structural constraints (binary + categorical) shared across all count combos
-    structural = _structural_entries(outputs, dataset, threshold=args.threshold)
-
     is_raw = isinstance(dataset, RawFeatureDataset)
-    if is_raw:
-        q_logits = [t.squeeze(0) for t in outputs["quantile"]]
-        count_ranges = _atom_count_ranges_from_quantiles(
-            q_logits, dataset.continuous_feature_order,
-            cont_mean=dataset._cont_mean, cont_std=dataset._cont_std,
-        )
+
+    if thresholds is not None:
+        conf_sets = sets_from_outputs(outputs, thresholds)
+        structural = _conformal_structural_entries(conf_sets, dataset)
+        if is_raw and conf_sets["quantile"] is not None:
+            count_ranges = _conformal_atom_count_ranges(
+                conf_sets, dataset.continuous_feature_order,
+                cont_mean=dataset._cont_mean, cont_std=dataset._cont_std,
+            )
+        elif is_raw:
+            q_logits = [t.squeeze(0) for t in outputs["quantile"]]
+            count_ranges = _atom_count_ranges_from_quantiles(
+                q_logits, dataset.continuous_feature_order,
+                cont_mean=dataset._cont_mean, cont_std=dataset._cont_std,
+            )
+        else:
+            count_ranges = None
+    else:
+        structural = _structural_entries(outputs, dataset, threshold=args.threshold)
+        count_ranges = None
+        if is_raw:
+            q_logits = [t.squeeze(0) for t in outputs["quantile"]]
+            count_ranges = _atom_count_ranges_from_quantiles(
+                q_logits, dataset.continuous_feature_order,
+                cont_mean=dataset._cont_mean, cont_std=dataset._cont_std,
+            )
+
+    if is_raw and count_ranges is not None:
         count_keys = list(count_ranges.keys())
         n_combos = 1
         for lo, hi in count_ranges.values():

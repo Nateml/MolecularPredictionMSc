@@ -41,11 +41,16 @@ class CheckpointingConfig(BaseModel):
         return _PROJECT_ROOT / self.save_dir
 
 
+class ConformalConfig(BaseModel):
+    alpha: float = 0.1  # miscoverage level; target coverage = 1 - alpha
+
+
 class Config(BaseModel):
     model: ModelConfig = ModelConfig()
     training: TrainingConfig = TrainingConfig()
     data: DataConfig
     checkpointing: CheckpointingConfig = CheckpointingConfig()
+    conformal: ConformalConfig = ConformalConfig()
 
 
 def load_config(path: Path | str | None = None) -> Config:

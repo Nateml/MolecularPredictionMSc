@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+import torch
 from pathlib import Path
 from loguru import logger
 
@@ -21,6 +22,8 @@ from data.split import (
     SEED
 )
 from model.train import train
+from model.conformal import calibrate_model
+from torch.utils.data import DataLoader
 
 def main():
     data_path = config.data.resolved_dataset_path()
@@ -119,7 +122,7 @@ def main():
     output_path = output_path.parent / split_hash / output_path.name
 
     logger.info(f"Training with output path: {output_path}...")
-    train(
+    model = train(
         model=model,
         train_dataset=train_ds,
         val_dataset=val_ds,
@@ -129,6 +132,13 @@ def main():
         output_path=output_path,
         continuous_stats=norm_stats if isinstance(model, MultitaskMLPWithQRegression) else None,
     )
+
+    logger.info("Computing conformal thresholds from calibration set...")
+    calib_loader = DataLoader(calibration_ds, batch_size=config.training.batch_size, shuffle=False)
+    thresholds = calibrate_model(model, calib_loader, alpha=config.conformal.alpha)
+    thresholds_path = output_path.parent / "conformal_thresholds.pt"
+    torch.save(thresholds, thresholds_path)
+    logger.info(f"Conformal thresholds saved to {thresholds_path}")
 
 
 if __name__ == "__main__":
