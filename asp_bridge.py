@@ -11,6 +11,48 @@ from predicates.compiler import compile_asp_constraint
 
 _ASP_DIR = Path(__file__).resolve().parent / "src" / "asp"
 
+# Elements parametrized in smiles.lp (C/H/N/O/P/S only).
+_ASP_ELEMENTS = {"C", "H", "N", "O", "P", "S"}
+
+
+def is_asp_supported(smiles: str) -> tuple[bool, str]:
+    """Check whether a molecule is representable by the ASP solver.
+
+    Returns (True, "") if supported, or (False, reason) otherwise.
+    """
+    try:
+        from rdkit import Chem
+    except ImportError:
+        raise RuntimeError("rdkit required for is_asp_supported()")
+
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        return False, "invalid SMILES"
+
+    for atom in mol.GetAtoms():
+        sym = atom.GetSymbol()
+        # smiles.lp only parametrizes c/h/n/o/p/s — no valence rules for anything else
+        if sym not in _ASP_ELEMENTS:
+            return False, f"unsupported element: {sym}"
+        # smiles.lp hardcodes formal_charge(0); EI-MS analytes are neutral anyway
+        if atom.GetFormalCharge() != 0:
+            return False, f"formal charge {atom.GetFormalCharge():+d} on {sym}"
+        # isotope labels are RDKit metadata only; ASP matches by symbol+valence,
+        # so [2H] and H are identical to it — ground truth would never match
+        if atom.GetIsotope() != 0:
+            return False, f"isotope label on {sym}"
+        # ASP fills spare valence slots with implicit H; a radical leaves one
+        # unpaired, so the solver would generate a different (hydrogenated) molecule
+        if atom.GetNumRadicalElectrons() > 0:
+            return False, f"radical electrons on {sym}"
+
+    # ASP builds one graph via main chain + branches + rings; no mechanism
+    # exists to generate two disconnected fragments
+    if len(Chem.GetMolFrags(mol)) > 1:
+        return False, f"disconnected molecule ({len(Chem.GetMolFrags(mol))} components)"
+
+    return True, ""
+
 # I have extracted this function from smiles.lp because my clingo doesn't have python support,
 # so the ASP program can't use #script(python) to call it directly.
 def min_main_chain_len(n):
