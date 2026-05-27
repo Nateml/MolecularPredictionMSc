@@ -55,7 +55,7 @@ def main():
         print("Dataset is RawFeatureDataset, enabling regression heads in CNN.")
         # enable quantile regression heads for continuous targets
         model_kwargs.update(
-            num_regression=getattr(config.model, "num_regression", 4),
+            num_regression=dataset.n_continuous,
             num_quantiles=getattr(config.model, "num_quantiles", 3),
             regression_hidden_dim=getattr(config.model, "regression_hidden_dim", 64),
         )
@@ -64,6 +64,17 @@ def main():
         print("weewooweewooweewooweewooweewooweewooweewooweewooweewooweewooweewooweewooweewooweewooweewooweewooweewoowee")
 
     model = MultitaskCNN(**model_kwargs)
+
+    # Validate model-dataset compatibility
+    if isinstance(dataset, RawFeatureDataset):
+        if not hasattr(model, 'num_regression') or model.num_regression != dataset.n_continuous:
+            raise ValueError(
+                f"Model-dataset mismatch: model has {getattr(model, 'num_regression', 0)} "
+                f"regression heads but dataset has {dataset.n_continuous} continuous features. "
+                f"This will cause conformal threshold computation to fail. "
+                f"Ensure model is initialized with num_regression=dataset.n_continuous."
+            )
+        logger.info(f"✓ Model has {model.num_regression} regression heads matching {dataset.n_continuous} continuous features")
 
     fractions = {
         "train": TRAIN_FRACTION,

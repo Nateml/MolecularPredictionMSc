@@ -257,6 +257,36 @@ class SpectrumDataset(Dataset, ABC):
                     continue
                 break
 
+        # If we found no objects using array parsing, try newline-delimited JSON (NDJSON)
+        # Some export formats store one JSON object per line rather than a top-level array.
+        if not index:
+            try:
+                index_nd: List[Tuple[int, int]] = []
+                with open(self.data_path, "rb") as fh2:
+                    while True:
+                        start = fh2.tell()
+                        line = fh2.readline()
+                        if not line:
+                            break
+                        stripped = line.lstrip()
+                        if not stripped:
+                            continue
+                        if stripped.startswith(b"{"):
+                            # validate JSON quickly
+                            try:
+                                json.loads(line.decode("utf-8"))
+                            except Exception:
+                                # not a valid JSON object line; skip
+                                continue
+                            end = fh2.tell()
+                            index_nd.append((start, end))
+
+                if index_nd:
+                    index = index_nd
+            except Exception:
+                # If fallback fails, keep index as-is (possibly empty)
+                pass
+
         with open(idx_path, "w", encoding="utf-8") as fh:
             json.dump(index, fh)
         return index
