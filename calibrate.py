@@ -10,6 +10,7 @@ Usage:
     python calibrate.py
     python calibrate.py --checkpoint models/final/multitask_mlp_mixed_best.pt
     python calibrate.py --checkpoint models/final/multitask_mlp_mixed_best.pt --alpha 0.05
+    python calibrate.py --checkpoint models/final/multitask_mlp_mixed_best.pt --calibration-set /path/to/calibration.json
 """
 from __future__ import annotations
 
@@ -53,6 +54,10 @@ def parse_args() -> argparse.Namespace:
         "--alpha", type=float, default=config.conformal.alpha,
         help=f"Miscoverage level; target coverage = 1 - alpha (default: {config.conformal.alpha})",
     )
+    p.add_argument(
+        "--calibration-set", default=None,
+        help="Path to a calibration JSON dataset. Bypasses the split-hash pipeline.",
+    )
     return p.parse_args()
 
 
@@ -71,43 +76,57 @@ def main() -> None:
     print(f"Loading model from {checkpoint_path}...")
     model, dataset, device = load_model(checkpoint_path)
 
-    data_path = config.data.resolved_dataset_path()
-    schema_path = config.data.resolved_schema_path()
-    fractions = {
-        "train": TRAIN_FRACTION,
-        "val": VAL_FRACTION,
-        "calibration": CALIBRATION_FRACTION,
-        "test": TEST_FRACTION,
-    }
-
-    ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
-    split_hash = ckpt.get("split_hash", None)
-    if split_hash:
-        split_dir = data_path.parent / "splits" / split_hash
+    if args.calibration_set:
+        calib_path = Path(args.calibration_set)
+        if not calib_path.exists():
+            print(f"Calibration set not found: {calib_path}", file=sys.stderr)
+            sys.exit(1)
+        schema_path = config.data.resolved_schema_path()
+        calibration_ds = RawFeatureDataset(calib_path, schema_path)
+        if dataset._cont_mean is not None:
+            calibration_ds.normalise_continuous(
+                dataset._cont_mean.tolist(),
+                dataset._cont_std.tolist(),
+            )
+        print(f"Using calibration set from {calib_path} ({len(calibration_ds)} samples)...")
     else:
-        print("Warning: No split hash found in checkpoint. Attempting to find splits by data/schema/fraction config, but this may fail if the splits were generated with different config or code version.", file=sys.stderr)
-        split_dir = splits_dir(data_path, schema_path, fractions, SEED)
+        data_path = config.data.resolved_dataset_path()
+        schema_path = config.data.resolved_schema_path()
+        fractions = {
+            "train": TRAIN_FRACTION,
+            "val": VAL_FRACTION,
+            "calibration": CALIBRATION_FRACTION,
+            "test": TEST_FRACTION,
+        }
 
-    if not splits_exist(split_dir):
-        print(
-            f"No splits found at {split_dir}. "
-            "Run training first (python -m src.model.run_training) to generate splits.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+        ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+        split_hash = ckpt.get("split_hash", None)
+        if split_hash:
+            split_dir = data_path.parent / "splits" / split_hash
+        else:
+            print("Warning: No split hash found in checkpoint. Attempting to find splits by data/schema/fraction config, but this may fail if the splits were generated with different config or code version.", file=sys.stderr)
+            split_dir = splits_dir(data_path, schema_path, fractions, SEED)
 
-    validate_splits_meta(split_dir, data_path, schema_path, fractions, SEED)
-    _, _, calibration_subset, _ = load_splits(split_dir)
+        if not splits_exist(split_dir):
+            print(
+                f"No splits found at {split_dir}. "
+                "Run training first (python -m src.model.run_training) to generate splits.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
-    _class = type(dataset)
-    calibration_ds = _class.from_subset(calibration_subset)
+        validate_splits_meta(split_dir, data_path, schema_path, fractions, SEED)
+        _, _, calibration_subset, _ = load_splits(split_dir)
 
-    # Re-apply normalization stats from the loaded dataset (cleared by from_subset)
-    if isinstance(calibration_ds, RawFeatureDataset) and dataset._cont_mean is not None:
-        calibration_ds.normalise_continuous(
-            dataset._cont_mean.tolist(),
-            dataset._cont_std.tolist(),
-        )
+        _class = type(dataset)
+        calibration_ds = _class.from_subset(calibration_subset)
+
+        # Re-apply normalization stats from the loaded dataset (cleared by from_subset)
+        if isinstance(calibration_ds, RawFeatureDataset) and dataset._cont_mean is not None:
+            calibration_ds.normalise_continuous(
+                dataset._cont_mean.tolist(),
+                dataset._cont_std.tolist(),
+            )
 
     print(f"Calibrating on {len(calibration_ds)} samples with alpha={args.alpha}...")
     calib_loader = DataLoader(calibration_ds, batch_size=config.training.batch_size, shuffle=False)
