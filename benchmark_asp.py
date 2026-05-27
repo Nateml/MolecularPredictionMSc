@@ -32,35 +32,47 @@ from predicates.interface import PredictionEntry, PredictionInterface
 # Each entry: (label, atom_counts_dict, optional_pred_entries_dict)
 # atom_counts keys match what compile_asp_constraint / solve expect.
 
+# Solve time is driven by degree of unsaturation (DoU = (2C+2+N-H)/2),
+# not atom count alone. C9H18 (DoU=1) ~0.4s; C8H10 (DoU=4) ~10s.
+
 _SMALL = [
-    ("C2H6O  (ethanol)",       dict(num_carbons=2, num_hydrogens=6,  num_oxygens=1, num_nitrogens=0, num_sulfurs=0, num_phosphorus=0), {}),
-    ("C3H6O  (propanone)",     dict(num_carbons=3, num_hydrogens=6,  num_oxygens=1, num_nitrogens=0, num_sulfurs=0, num_phosphorus=0), {}),
-    ("C3H8O  (propanol)",      dict(num_carbons=3, num_hydrogens=8,  num_oxygens=1, num_nitrogens=0, num_sulfurs=0, num_phosphorus=0), {}),
+    # DoU=0-1, < 0.1s
+    ("C2H6O  (ethanol)  DoU=0", dict(num_carbons=2, num_hydrogens=6,  num_oxygens=1, num_nitrogens=0, num_sulfurs=0, num_phosphorus=0), {}),
+    ("C3H6O  (propanone) DoU=1", dict(num_carbons=3, num_hydrogens=6,  num_oxygens=1, num_nitrogens=0, num_sulfurs=0, num_phosphorus=0), {}),
+    ("C3H8O  (propanol)  DoU=0", dict(num_carbons=3, num_hydrogens=8,  num_oxygens=1, num_nitrogens=0, num_sulfurs=0, num_phosphorus=0), {}),
 ]
 
 _MEDIUM = [
-    ("C4H8O  (butanone/etc)", dict(num_carbons=4, num_hydrogens=8,  num_oxygens=1, num_nitrogens=0, num_sulfurs=0, num_phosphorus=0), {}),
-    ("C4H10O (butanol)",      dict(num_carbons=4, num_hydrogens=10, num_oxygens=1, num_nitrogens=0, num_sulfurs=0, num_phosphorus=0), {}),
-    ("C5H10O (pentanone/etc)",dict(num_carbons=5, num_hydrogens=10, num_oxygens=1, num_nitrogens=0, num_sulfurs=0, num_phosphorus=0), {}),
+    # DoU=1-2, 0.2-3s
+    ("C5H10O (pentanone) DoU=1", dict(num_carbons=5, num_hydrogens=10, num_oxygens=1, num_nitrogens=0, num_sulfurs=0, num_phosphorus=0), {}),
+    ("C7H14O (heptanone) DoU=1", dict(num_carbons=7, num_hydrogens=14, num_oxygens=1, num_nitrogens=0, num_sulfurs=0, num_phosphorus=0), {}),
+    ("C7H8   (toluene)   DoU=4", dict(num_carbons=7, num_hydrogens=8,  num_oxygens=0, num_nitrogens=0, num_sulfurs=0, num_phosphorus=0), {}),
 ]
 
 _LARGE = [
-    ("C6H12O (hexanone/etc)", dict(num_carbons=6, num_hydrogens=12, num_oxygens=1, num_nitrogens=0, num_sulfurs=0, num_phosphorus=0), {}),
-    ("C6H6   (benzene/etc)",  dict(num_carbons=6, num_hydrogens=6,  num_oxygens=0, num_nitrogens=0, num_sulfurs=0, num_phosphorus=0), {}),
+    # DoU=4, 5-15s
+    ("C8H10  (xylene)    DoU=4", dict(num_carbons=8, num_hydrogens=10, num_oxygens=0, num_nitrogens=0, num_sulfurs=0, num_phosphorus=0), {}),
+    ("C6H7N  (aniline)   DoU=4", dict(num_carbons=6, num_hydrogens=7,  num_oxygens=0, num_nitrogens=1, num_sulfurs=0, num_phosphorus=0), {}),
+]
+
+_XL = [
+    # DoU=4-5, 30s+ — use --timeout to cap
+    ("C8H8   (styrene)   DoU=5", dict(num_carbons=8, num_hydrogens=8,  num_oxygens=0, num_nitrogens=0, num_sulfurs=0, num_phosphorus=0), {}),
+    ("C7H8O  (cresol)    DoU=4", dict(num_carbons=7, num_hydrogens=8,  num_oxygens=1, num_nitrogens=0, num_sulfurs=0, num_phosphorus=0), {}),
 ]
 
 _CONSTRAINED = [
-    # C3H6O with carbonyl constraint (MACCS key 166 = carbonyl C=O)
+    # C7H8O with carbonyl constraint — tests constraint pruning on a large formula
     (
-        "C3H6O +carbonyl",
-        dict(num_carbons=3, num_hydrogens=6, num_oxygens=1, num_nitrogens=0, num_sulfurs=0, num_phosphorus=0),
+        "C7H8O +carbonyl DoU=4",
+        dict(num_carbons=7, num_hydrogens=8, num_oxygens=1, num_nitrogens=0, num_sulfurs=0, num_phosphorus=0),
         {166: PredictionEntry(pred_set=[1])},
     ),
-    # C4H8O with carbonyl constraint
+    # C8H10 with ring constraint — tests constraint pruning on large formula
     (
-        "C4H8O +carbonyl",
-        dict(num_carbons=4, num_hydrogens=8, num_oxygens=1, num_nitrogens=0, num_sulfurs=0, num_phosphorus=0),
-        {166: PredictionEntry(pred_set=[1])},
+        "C8H10 +ring     DoU=4",
+        dict(num_carbons=8, num_hydrogens=10, num_oxygens=0, num_nitrogens=0, num_sulfurs=0, num_phosphorus=0),
+        {160: PredictionEntry(pred_set=[1])},
     ),
 ]
 
@@ -68,8 +80,9 @@ _FORMULA_SETS = {
     "small":      _SMALL,
     "medium":     _MEDIUM,
     "large":      _LARGE,
+    "xl":         _XL,
     "constrained":_CONSTRAINED,
-    "all":        _SMALL + _MEDIUM + _LARGE + _CONSTRAINED,
+    "all":        _SMALL + _MEDIUM + _LARGE + _XL + _CONSTRAINED,
 }
 
 # ---------------------------------------------------------------------------
@@ -183,7 +196,7 @@ def parse_args() -> argparse.Namespace:
         "--formulas",
         choices=list(_FORMULA_SETS.keys()),
         default="all",
-        help="Which formula set to benchmark (default: all)",
+        help="Which formula set to benchmark (default: all). xl uses 30s+ formulas, set --timeout accordingly.",
     )
     p.add_argument("--timeout", type=int, default=60, help="Per-solve timeout in seconds (default: 60)")
     return p.parse_args()
