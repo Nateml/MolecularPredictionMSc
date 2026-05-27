@@ -220,10 +220,16 @@ asp/debug/*
 src/asp/debug/*
 
 # Notebooks
-notebooks/*
+# notebooks/*
 
 # Claude
 CLAUDE.md
 
 # Pickle
 *.pkl
+
+# Oracle eval reports
+asp-bridge-diagnosis-*.md
+
+# Eval results
+eval_results.csv

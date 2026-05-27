@@ -58,6 +58,13 @@ HELPER_PREDICATES: Dict[str, str] = {
             parent(I, _, J).
         any_bond_between(I, J) :-
             parent(J, _, I).
+        % ring-closing bond (cycle_end → cycle_start) is not in parent relation
+        any_bond_between(I, J) :-
+            cycle_start(I, CYCLE),
+            cycle_end(J, CYCLE).
+        any_bond_between(I, J) :-
+            cycle_end(I, CYCLE),
+            cycle_start(J, CYCLE).
     """,
 
     "alcohol_atom": """
@@ -138,17 +145,42 @@ HELPER_PREDICATES: Dict[str, str] = {
             N = #count { I : aniline_atom(I) }.
     """,
 
+    # Count in-ring double bonds for cycle C.
+    # multi_bond(I, 2) encodes "bond from atom I-1 to I is double" on the main chain.
+    # The ring-closing bond (cycle_end → cycle_start) is not in multi_bond; we skip it
+    # by only counting I in (S, E] (S itself would be outside the ring).
+    "ring_double_bond_count": """
+        ring_double_bond_count(C, N) :-
+            cycle_start(S, C),
+            cycle_end(E, C),
+            N = #count { I : ring_atom(I), multi_bond(I, 2), S < I, I <= E }.
+    """,
+
+    # A ring cycle is aromatic in Kekulé representation if:
+    #   6-membered ring with 3 alternating double bonds (benzene-type), or
+    #   5-membered ring with 2 double bonds + one heteroatom (furan/pyrrole/thiophene).
+    "aromatic_ring_cycle": """
+        aromatic_ring_cycle(C) :-
+            cycle_start(S, C),
+            cycle_end(E, C),
+            E - S = 5,
+            ring_double_bond_count(C, 3).
+        aromatic_ring_cycle(C) :-
+            cycle_start(S, C),
+            cycle_end(E, C),
+            E - S = 4,
+            ring_double_bond_count(C, 2),
+            ring_atom(I), symbol(I, EL), EL != "C", EL != "H",
+            S <= I, I <= E.
+    """,
+
     "aromatic_atom": """
         aromatic_atom(I) :-
-            cycle_start(I, _).
-        aromatic_atom(I) :-
-            cycle_end(I, _).
-        aromatic_atom(I) :-
-            cycle_start(J, _),
-            any_bond_between(J, I).
-        aromatic_atom(I) :-
-            cycle_end(J, _),
-            any_bond_between(J, I).
+            ring_atom(I),
+            aromatic_ring_cycle(C),
+            cycle_start(S, C),
+            cycle_end(E, C),
+            S <= I, I <= E.
     """,
 
     "aromatic_atom_count": """
@@ -178,7 +210,7 @@ HELPER_PREDICATES: Dict[str, str] = {
 
     "aromatic_ring_count": """
         aromatic_ring_count(N) :-
-            N = #count { CYCLE : cycle_start(_, CYCLE) }.
+            N = #count { C : aromatic_ring_cycle(C) }.
     """,
 
     "aromatic_ring": """
@@ -192,14 +224,16 @@ HELPER_PREDICATES: Dict[str, str] = {
             N = #count { I : aromatic_atom(I), smiles_symbol(I, "S") }.
     """,
 
+    # smiles.lp never outputs @ / @@ stereo notation, so no generated molecule
+    # ever has an assigned chiral center — assigned is always 0.
     "assigned_chiral_center_count": """
-        assigned_chiral_center_count(N) :-
-            chiral_center_count(N).
+        assigned_chiral_center_count(0).
     """,
 
-    # TODO: smiles.lp does not currently expose stereochemistry assignment status.
+    # Topological potential chiral centers without explicit stereo = unassigned.
     "unassigned_chiral_center_count": """
-        unassigned_chiral_center_count(0).
+        unassigned_chiral_center_count(N) :-
+            chiral_center_count(N).
     """,
 
     "branch_point_atom": """
@@ -392,6 +426,51 @@ HELPER_PREDICATES: Dict[str, str] = {
     "ring_atom": """
         ring_atom(I) :- cycle_start(I, _).
         ring_atom(I) :- cycle_end(I, _).
+        % main-chain atoms strictly between start and end of a ring are also ring atoms;
+        % branch atoms always have indices > MAIN_CHAIN_LEN >= E so are never in (S, E)
+        ring_atom(I) :- cycle_start(S, C), cycle_end(E, C), symbol(I, _), S < I, I < E.
+    """,
+
+    "atom_in_ring": """
+        atom_in_ring(I, CY) :-
+            cycle_start(S, CY),
+            cycle_end(E, CY),
+            symbol(I, _),
+            S <= I, I <= E.
+        atom_in_ring(I) :-
+            atom_in_ring(I, _).
+    """,
+
+    "ring_span_size": """
+        ring_span_size(CY, N) :-
+            cycle_start(S, CY),
+            cycle_end(E, CY),
+            N = E - S + 1.
+    """,
+
+    "same_ring": """
+        same_ring(I, J) :-
+            atom_in_ring(I, CY),
+            atom_in_ring(J, CY),
+            I != J.
+    """,
+
+    "approx_ring_bond": """
+        approx_ring_bond(I, J) :-
+            any_bond_between(I, J),
+            same_ring(I, J).
+    """,
+
+    "approx_nonring_bond": """
+        approx_nonring_bond(I, J) :-
+            any_bond_between(I, J),
+            not approx_ring_bond(I, J).
+    """,
+
+    "ring_bond_degree": """
+        ring_bond_degree(I, N) :-
+            atom_in_ring(I),
+            N = #count { J : approx_ring_bond(I, J) }.
     """,
 
     "degree_of_unsaturation": """
@@ -528,25 +607,24 @@ HELPER_PREDICATES: Dict[str, str] = {
             M = 12 * c + 1 * h + 14 * n + 16 * o.
     """,
 
-    # NOTE: current smiles.lp exposes neutral N with base valence 3.
+    # smiles.lp N is always neutral valence-3; every N atom contributes total
+    # valence 3 (explicit bonds + implicit H = 3) regardless of hybridization.
+    # free_bonds = implicit-H count, NOT a valence indicator.
     "n_valence_1_count": """
-        n_valence_1_count(N) :-
-            N = #count { I : symbol(I, "N"), free_bonds(I, 2) }.
+        n_valence_1_count(0).
     """,
 
     "n_valence_2_count": """
-        n_valence_2_count(N) :-
-            N = #count { I : symbol(I, "N"), free_bonds(I, 1) }.
+        n_valence_2_count(0).
     """,
 
     "n_valence_3_count": """
         n_valence_3_count(N) :-
-            N = #count { I : symbol(I, "N"), free_bonds(I, 0) }.
+            N = #count { I : symbol(I, "N") }.
     """,
 
     "n_valence_4plus_count": """
-        n_valence_4plus_count(N) :-
-            N = #count { I : symbol(I, "N"), free_bonds(I, F), F < 0 }.
+        n_valence_4plus_count(0).
     """,
 
     "nitrile_atom": """
@@ -584,29 +662,31 @@ HELPER_PREDICATES: Dict[str, str] = {
         nitro_count(N) :- nitro_count_value(N).
     """,
 
+    # smiles.lp O is always neutral valence-2; every O atom contributes total
+    # valence 2 (explicit bonds + implicit H = 2) regardless of bonding.
     "o_valence_1_count": """
-        o_valence_1_count(N) :-
-            N = #count { I : symbol(I, "O"), free_bonds(I, 2) }.
+        o_valence_1_count(0).
     """,
 
     "o_valence_2_count": """
         o_valence_2_count(N) :-
-            N = #count { I : symbol(I, "O"), free_bonds(I, 1) }.
+            N = #count { I : symbol(I, "O") }.
     """,
 
     "o_valence_3plus_count": """
-        o_valence_3plus_count(N) :-
-            N = #count { I : symbol(I, "O"), free_bonds(I, F), F <= 0 }.
+        o_valence_3plus_count(0).
     """,
 
+    # smiles.lp splits P into P3 (valence 3) and P5 (valence 5); use the
+    # symbol type directly instead of free_bonds (which is implicit-H count).
     "p_valence_3_count": """
         p_valence_3_count(N) :-
-            N = #count { I : smiles_symbol(I, "P"), free_bonds(I, 0) }.
+            N = #count { I : symbol(I, "P3") }.
     """,
 
     "p_valence_5plus_count": """
         p_valence_5plus_count(N) :-
-            N = #count { I : smiles_symbol(I, "P"), free_bonds(I, F), F < 0 }.
+            N = #count { I : symbol(I, "P5") }.
     """,
 
     "s_valence_2_count": """
@@ -1214,7 +1294,7 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
     165: {
     "predicate": "has_ring",
     "definition": """
-        has_ring :- ring_atom(_).
+        has_ring :- atom_in_ring(_).
     """,
     "domain": {0, 1}
     },
@@ -2452,8 +2532,12 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
     126: {
         "predicate": "has_a_nonring_o_a",
         "definition": """
+            % *!@[#8]!@*: O with two non-ring bonds
             has_a_nonring_o_a :-
-                nonring_o_a_a_atom(_).
+                symbol(O, "O"),
+                approx_nonring_bond(A, O),
+                approx_nonring_bond(O, B),
+                A != B.
         """,
         "domain": {0, 1}
     },
@@ -2461,8 +2545,12 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
     155: {
         "predicate": "has_a_nonring_ch2_a",
         "definition": """
+            % *!@[CH2]!@*: CH2 with two non-ring bonds
             has_a_nonring_ch2_a :-
-                nonring_ch2_a_a_atom(_).
+                ch2_atom(C),
+                approx_nonring_bond(A, C),
+                approx_nonring_bond(C, B),
+                A != B.
         """,
         "domain": {0, 1}
     },
@@ -2806,18 +2894,19 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
     118: {
         "predicate": "has_a_ch2_ch2_a_gt1",
         "definition": """
-            a_ch2_ch2_a_pair(I, J, K, L) :-
+            % SMARTS $(*~[CH2]~[CH2]~*) counts each outer atom I adjacent to a CH2-CH2
+            % pair — two distinct outer atoms per pair, not one tuple per pair.
+            a_ch2_ch2_a_outer(I) :-
                 heavy_neighbor(I, J),
                 heavy_neighbor(J, K),
                 heavy_neighbor(K, L),
                 ch2_atom(J),
                 ch2_atom(K),
                 I != J, J != K, K != L,
-                I != K, I != L, J != L,
-                J < K.
+                I != K, I != L, J != L.
 
             has_a_ch2_ch2_a_gt1 :-
-                2 <= #count { I, J, K, L : a_ch2_ch2_a_pair(I, J, K, L) }.
+                2 <= #count { I : a_ch2_ch2_a_outer(I) }.
         """,
         "domain": {0, 1}
     },
@@ -2835,6 +2924,383 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
 
             has_q_ch2_a_gt1 :-
                 2 <= #count { I, J, K : q_ch2_a_match(I, J, K) }.
+        """,
+        "domain": {0, 1}
+    },
+
+    ##############################
+    ##### PADDING / TRIVIAL  #####
+    ##############################
+    1: {
+        "predicate": "has_isotope",
+        "definition": """
+            % MACCS key 1: ISOTOPE - smiles.lp does not model isotope labels; always 0.
+        """,
+        "domain": {0, 1}
+    },
+
+    49: {
+        "predicate": "has_charge",
+        "definition": """
+            % MACCS key 49: CHARGE - smiles.lp only models neutral molecules; always 0.
+        """,
+        "domain": {0, 1}
+    },
+
+    166: {
+        "predicate": "has_fragments",
+        "definition": """
+            % MACCS key 166: FRAGMENTS > 1 - smiles.lp models single connected molecules; always 0.
+        """,
+        "domain": {0, 1}
+    },
+
+    ##############################
+    ##### ALKALINE / METALS  #####
+    ##############################
+    10: {
+        "predicate": "has_alkaline_earth",
+        "definition": """
+            has_alkaline_earth :- smiles_symbol(_, "Be").
+            has_alkaline_earth :- smiles_symbol(_, "Mg").
+            has_alkaline_earth :- smiles_symbol(_, "Ca").
+            has_alkaline_earth :- smiles_symbol(_, "Sr").
+            has_alkaline_earth :- smiles_symbol(_, "Ba").
+            has_alkaline_earth :- smiles_symbol(_, "Ra").
+        """,
+        "domain": {0, 1}
+    },
+
+    ##############################
+    ##### HETEROATOM IN RING #####
+    ##############################
+    16: {
+        "predicate": "has_q_in_3m_ring",
+        "definition": """
+            has_q_in_3m_ring :-
+                heteroatom(I),
+                atom_in_ring(I, CY),
+                ring_span_size(CY, 3).
+        """,
+        "domain": {0, 1}
+    },
+
+    8: {
+        "predicate": "has_q_in_4m_ring",
+        "definition": """
+            has_q_in_4m_ring :-
+                heteroatom(I),
+                atom_in_ring(I, CY),
+                ring_span_size(CY, 4).
+        """,
+        "domain": {0, 1}
+    },
+
+    83: {
+        "predicate": "has_q_in_5m_ring",
+        "definition": """
+            has_q_in_5m_ring :-
+                heteroatom(I),
+                atom_in_ring(I, CY),
+                ring_span_size(CY, 5).
+        """,
+        "domain": {0, 1}
+    },
+
+    98: {
+        "predicate": "has_q_in_6m_ring",
+        "definition": """
+            has_q_in_6m_ring :-
+                heteroatom(I),
+                atom_in_ring(I, CY),
+                ring_span_size(CY, 6).
+        """,
+        "domain": {0, 1}
+    },
+
+    ##############################
+    ##### S / O / N IN RING  #####
+    ##############################
+    36: {
+        "predicate": "has_s_in_ring",
+        "definition": """
+            has_s_in_ring :-
+                smiles_symbol(I, "S"),
+                atom_in_ring(I).
+        """,
+        "domain": {0, 1}
+    },
+
+    57: {
+        "predicate": "has_o_in_ring",
+        "definition": """
+            has_o_in_ring :-
+                symbol(I, "O"),
+                atom_in_ring(I).
+        """,
+        "domain": {0, 1}
+    },
+
+    121: {
+        "predicate": "has_n_in_ring",
+        "definition": """
+            has_n_in_ring :-
+                symbol(I, "N"),
+                atom_in_ring(I).
+        """,
+        "domain": {0, 1}
+    },
+
+    120: {
+        "predicate": "has_heteroatom_in_ring_gt1",
+        "definition": """
+            has_heteroatom_in_ring_gt1 :-
+                2 <= #count { I : heteroatom(I), atom_in_ring(I) }.
+        """,
+        "domain": {0, 1}
+    },
+
+    137: {
+        "predicate": "has_heterocycle",
+        "definition": """
+            has_heterocycle :-
+                heteroatom(I),
+                atom_in_ring(I).
+        """,
+        "domain": {0, 1}
+    },
+
+    ##############################
+    ##### C=C IN RING        #####
+    ##############################
+    26: {
+        "predicate": "has_c_eq_c_ring",
+        "definition": """
+            % C$=C: C=C double bond where both carbons share a ring
+            has_c_eq_c_ring :-
+                double_bond_between(I, J),
+                symbol(I, "C"),
+                symbol(J, "C"),
+                same_ring(I, J).
+        """,
+        "domain": {0, 1}
+    },
+
+    ##############################
+    ##### AROMATIC PATTERNS  #####
+    ##############################
+    162: {
+        "predicate": "has_aromatic_atom",
+        "definition": """
+            % Aromatic: approximated as any atom in a ring span
+            has_aromatic_atom :- atom_in_ring(_).
+        """,
+        "domain": {0, 1}
+    },
+
+    125: {
+        "predicate": "has_aromatic_ring_gt1",
+        "definition": """
+            % Aromatic ring > 1
+            has_aromatic_ring_gt1 :-
+                aromatic_ring_count(N),
+                N > 1.
+        """,
+        "domain": {0, 1}
+    },
+
+    65: {
+        "predicate": "has_aromatic_c_n",
+        "definition": """
+            % c:n - aromatic C bonded to aromatic N (approximated as ring bond C-N)
+            has_aromatic_c_n :-
+                symbol(I, "C"),
+                symbol(J, "N"),
+                approx_ring_bond(I, J).
+        """,
+        "domain": {0, 1}
+    },
+
+    ##############################
+    ##### EXOCYCLIC BONDS    #####
+    ##############################
+    59: {
+        "predicate": "has_s_exo_aromatic",
+        "definition": """
+            % Snot%A%A: S (non-ring) with non-ring bond to ring atom J, J has ring bond to K
+            has_s_exo_aromatic :-
+                smiles_symbol(I, "S"),
+                not atom_in_ring(I),
+                approx_nonring_bond(I, J),
+                approx_ring_bond(J, K),
+                I != K.
+        """,
+        "domain": {0, 1}
+    },
+
+    113: {
+        "predicate": "has_o_exo_aromatic",
+        "definition": """
+            % Onot%A%A: O (non-ring) with non-ring bond to a ring atom
+            has_o_exo_aromatic :-
+                symbol(I, "O"),
+                not atom_in_ring(I),
+                approx_nonring_bond(I, J),
+                atom_in_ring(J).
+        """,
+        "domain": {0, 1}
+    },
+
+    135: {
+        "predicate": "has_n_exo_aromatic",
+        "definition": """
+            % Nnot%A%A: N (non-ring) with non-ring bond to a ring atom
+            has_n_exo_aromatic :-
+                symbol(I, "N"),
+                not atom_in_ring(I),
+                approx_nonring_bond(I, J),
+                atom_in_ring(J).
+        """,
+        "domain": {0, 1}
+    },
+
+    87: {
+        "predicate": "has_halogen_to_ring",
+        "definition": """
+            % X!A$A: halogen with non-ring bond to a ring atom
+            has_halogen_to_ring :-
+                smiles_symbol(I, "F"),
+                approx_nonring_bond(I, J),
+                atom_in_ring(J).
+            has_halogen_to_ring :-
+                smiles_symbol(I, "Cl"),
+                approx_nonring_bond(I, J),
+                atom_in_ring(J).
+            has_halogen_to_ring :-
+                smiles_symbol(I, "Br"),
+                approx_nonring_bond(I, J),
+                atom_in_ring(J).
+            has_halogen_to_ring :-
+                smiles_symbol(I, "I"),
+                approx_nonring_bond(I, J),
+                atom_in_ring(J).
+        """,
+        "domain": {0, 1}
+    },
+
+    64: {
+        "predicate": "has_ring_atom_to_s",
+        "definition": """
+            % A$A!S: ring atom with non-ring bond to S
+            has_ring_atom_to_s :-
+                atom_in_ring(I),
+                approx_nonring_bond(I, J),
+                smiles_symbol(J, "S").
+        """,
+        "domain": {0, 1}
+    },
+
+    143: {
+        "predicate": "has_ring_atom_to_o",
+        "definition": """
+            % A$A!O: ring atom with non-ring bond to O
+            has_ring_atom_to_o :-
+                atom_in_ring(I),
+                approx_nonring_bond(I, J),
+                symbol(J, "O").
+        """,
+        "domain": {0, 1}
+    },
+
+    127: {
+        "predicate": "has_ring_atom_to_o_gt1",
+        "definition": """
+            % A$A!O > 1: more than 1 ring atom with non-ring bond to O
+            ring_to_o_match(I, J) :-
+                atom_in_ring(I),
+                approx_nonring_bond(I, J),
+                symbol(J, "O").
+
+            has_ring_atom_to_o_gt1 :-
+                2 <= #count { I, J : ring_to_o_match(I, J) }.
+        """,
+        "domain": {0, 1}
+    },
+
+    133: {
+        "predicate": "has_ring_atom_to_n",
+        "definition": """
+            % A$A!N: ring atom with non-ring bond to N
+            has_ring_atom_to_n :-
+                atom_in_ring(I),
+                approx_nonring_bond(I, J),
+                symbol(J, "N").
+        """,
+        "domain": {0, 1}
+    },
+
+    75: {
+        "predicate": "has_nonring_bond_to_n_in_ring",
+        "definition": """
+            % A!N$A: non-ring bond to N that is in a ring
+            has_nonring_bond_to_n_in_ring :-
+                symbol(J, "N"),
+                atom_in_ring(J),
+                approx_nonring_bond(I, J).
+        """,
+        "domain": {0, 1}
+    },
+
+    ##############################
+    ##### RING BOND PATTERNS #####
+    ##############################
+    62: {
+        "predicate": "has_ring_inter_nonring_ring",
+        "definition": """
+            % *@*!@*@*: ring-bond, non-ring-bond, ring-bond (e.g. biphenyl)
+            has_ring_inter_nonring_ring :-
+                approx_ring_bond(A, B),
+                approx_nonring_bond(B, C),
+                approx_ring_bond(C, D),
+                A != C, B != D.
+        """,
+        "domain": {0, 1}
+    },
+
+    105: {
+        "predicate": "has_ring_junction_atom",
+        "definition": """
+            % *@*(@*)@*: atom with 3 or more ring bonds
+            has_ring_junction_atom :-
+                ring_bond_degree(I, N),
+                N >= 3.
+        """,
+        "domain": {0, 1}
+    },
+
+    150: {
+        "predicate": "has_nonring_ring_nonring",
+        "definition": """
+            % *!@*@*!@*: non-ring bond, ring bond, non-ring bond
+            has_nonring_ring_nonring :-
+                approx_nonring_bond(A, B),
+                approx_ring_bond(B, C),
+                approx_nonring_bond(C, D),
+                A != C, B != D, A != D.
+        """,
+        "domain": {0, 1}
+    },
+
+    144: {
+        "predicate": "has_nonaro_aro_aro_nonaro",
+        "definition": """
+            % Anot%A%Anot%A: non-aromatic-aromatic-aromatic-non-aromatic
+            % Approximated as non-ring bond, ring bond, non-ring bond (same as 150)
+            has_nonaro_aro_aro_nonaro :-
+                approx_nonring_bond(A, B),
+                approx_ring_bond(B, C),
+                approx_nonring_bond(C, D),
+                A != C, B != D, A != D.
         """,
         "domain": {0, 1}
     },
