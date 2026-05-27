@@ -192,14 +192,16 @@ HELPER_PREDICATES: Dict[str, str] = {
             N = #count { I : aromatic_atom(I), smiles_symbol(I, "S") }.
     """,
 
+    # smiles.lp never outputs @ / @@ stereo notation, so no generated molecule
+    # ever has an assigned chiral center — assigned is always 0.
     "assigned_chiral_center_count": """
-        assigned_chiral_center_count(N) :-
-            chiral_center_count(N).
+        assigned_chiral_center_count(0).
     """,
 
-    # TODO: smiles.lp does not currently expose stereochemistry assignment status.
+    # Topological potential chiral centers without explicit stereo = unassigned.
     "unassigned_chiral_center_count": """
-        unassigned_chiral_center_count(0).
+        unassigned_chiral_center_count(N) :-
+            chiral_center_count(N).
     """,
 
     "branch_point_atom": """
