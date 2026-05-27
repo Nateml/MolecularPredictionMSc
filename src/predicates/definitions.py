@@ -58,6 +58,13 @@ HELPER_PREDICATES: Dict[str, str] = {
             parent(I, _, J).
         any_bond_between(I, J) :-
             parent(J, _, I).
+        % ring-closing bond (cycle_end → cycle_start) is not in parent relation
+        any_bond_between(I, J) :-
+            cycle_start(I, CYCLE),
+            cycle_end(J, CYCLE).
+        any_bond_between(I, J) :-
+            cycle_end(I, CYCLE),
+            cycle_start(J, CYCLE).
     """,
 
     "alcohol_atom": """
@@ -138,17 +145,42 @@ HELPER_PREDICATES: Dict[str, str] = {
             N = #count { I : aniline_atom(I) }.
     """,
 
+    # Count in-ring double bonds for cycle C.
+    # multi_bond(I, 2) encodes "bond from atom I-1 to I is double" on the main chain.
+    # The ring-closing bond (cycle_end → cycle_start) is not in multi_bond; we skip it
+    # by only counting I in (S, E] (S itself would be outside the ring).
+    "ring_double_bond_count": """
+        ring_double_bond_count(C, N) :-
+            cycle_start(S, C),
+            cycle_end(E, C),
+            N = #count { I : ring_atom(I), multi_bond(I, 2), S < I, I <= E }.
+    """,
+
+    # A ring cycle is aromatic in Kekulé representation if:
+    #   6-membered ring with 3 alternating double bonds (benzene-type), or
+    #   5-membered ring with 2 double bonds + one heteroatom (furan/pyrrole/thiophene).
+    "aromatic_ring_cycle": """
+        aromatic_ring_cycle(C) :-
+            cycle_start(S, C),
+            cycle_end(E, C),
+            E - S = 5,
+            ring_double_bond_count(C, 3).
+        aromatic_ring_cycle(C) :-
+            cycle_start(S, C),
+            cycle_end(E, C),
+            E - S = 4,
+            ring_double_bond_count(C, 2),
+            ring_atom(I), symbol(I, EL), EL != "C", EL != "H",
+            S <= I, I <= E.
+    """,
+
     "aromatic_atom": """
         aromatic_atom(I) :-
-            cycle_start(I, _).
-        aromatic_atom(I) :-
-            cycle_end(I, _).
-        aromatic_atom(I) :-
-            cycle_start(J, _),
-            any_bond_between(J, I).
-        aromatic_atom(I) :-
-            cycle_end(J, _),
-            any_bond_between(J, I).
+            ring_atom(I),
+            aromatic_ring_cycle(C),
+            cycle_start(S, C),
+            cycle_end(E, C),
+            S <= I, I <= E.
     """,
 
     "aromatic_atom_count": """
@@ -178,7 +210,7 @@ HELPER_PREDICATES: Dict[str, str] = {
 
     "aromatic_ring_count": """
         aromatic_ring_count(N) :-
-            N = #count { CYCLE : cycle_start(_, CYCLE) }.
+            N = #count { C : aromatic_ring_cycle(C) }.
     """,
 
     "aromatic_ring": """
@@ -394,6 +426,9 @@ HELPER_PREDICATES: Dict[str, str] = {
     "ring_atom": """
         ring_atom(I) :- cycle_start(I, _).
         ring_atom(I) :- cycle_end(I, _).
+        % main-chain atoms strictly between start and end of a ring are also ring atoms;
+        % branch atoms always have indices > MAIN_CHAIN_LEN >= E so are never in (S, E)
+        ring_atom(I) :- cycle_start(S, C), cycle_end(E, C), symbol(I, _), S < I, I < E.
     """,
 
     "degree_of_unsaturation": """
@@ -2809,18 +2844,19 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
     118: {
         "predicate": "has_a_ch2_ch2_a_gt1",
         "definition": """
-            a_ch2_ch2_a_pair(I, J, K, L) :-
+            % SMARTS $(*~[CH2]~[CH2]~*) counts each outer atom I adjacent to a CH2-CH2
+            % pair — two distinct outer atoms per pair, not one tuple per pair.
+            a_ch2_ch2_a_outer(I) :-
                 heavy_neighbor(I, J),
                 heavy_neighbor(J, K),
                 heavy_neighbor(K, L),
                 ch2_atom(J),
                 ch2_atom(K),
                 I != J, J != K, K != L,
-                I != K, I != L, J != L,
-                J < K.
+                I != K, I != L, J != L.
 
             has_a_ch2_ch2_a_gt1 :-
-                2 <= #count { I, J, K, L : a_ch2_ch2_a_pair(I, J, K, L) }.
+                2 <= #count { I : a_ch2_ch2_a_outer(I) }.
         """,
         "domain": {0, 1}
     },
