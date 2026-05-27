@@ -167,33 +167,35 @@ def _solve_record(
     timeout: int,
 ) -> dict:
     """Worker: solve one record. Module-level so ProcessPoolExecutor can pickle it."""
-    candidates, _ = solve([], atom_counts, output_list_of_smiles=True, timeout=timeout)
-    cand_canons = {canon(s) for s in candidates} - {None}
-    found = gt_canon in cand_canons
-    if not found:
-        return {
-            "idx": dataset_idx,
-            "smiles": gt_smi_raw,
-            "found": False,
-            "n_candidates": 0,
-            "elapsed_s": 0.0,
-            "culprits": [],
-            "asp_unsolvable": True,
-        }
-
     t0 = time.monotonic()
     candidates, _ = solve(asp_constraints, atom_counts, output_list_of_smiles=True, timeout=timeout)
     elapsed = time.monotonic() - t0
     cand_canons = {canonical(s) for s in candidates} - {None}
     found = gt_canon in cand_canons if gt_canon else False
+
+    if found:
+        return {
+            "idx": dataset_idx,
+            "smiles": gt_smi_raw,
+            "found": True,
+            "n_candidates": len(candidates),
+            "elapsed_s": round(elapsed, 2),
+            "culprits": [],
+            "asp_unsolvable": False,
+        }
+
+    # Miss — check if ASP can generate this molecule at all (unconstrained)
+    uc_candidates, _ = solve([], atom_counts, output_list_of_smiles=True, timeout=timeout)
+    uc_canons = {canonical(s) for s in uc_candidates} - {None}
+    asp_unsolvable = gt_canon not in uc_canons if gt_canon else True
     return {
         "idx": dataset_idx,
         "smiles": gt_smi_raw,
-        "found": found,
+        "found": False,
         "n_candidates": len(candidates),
         "elapsed_s": round(elapsed, 2),
         "culprits": [],
-        "asp_unsolvable": False,
+        "asp_unsolvable": asp_unsolvable,
     }
 
 
@@ -250,7 +252,7 @@ def main() -> None:
     work_items: list[WorkItem] = []
     raw_idx = n_skip = 0
 
-    while len(work_items) < limit:
+    while len(work_items) < limit and raw_idx < n_total:
         record = dataset._load_record(raw_idx)
         dataset_idx = raw_idx
         raw_idx += 1
@@ -300,23 +302,9 @@ def main() -> None:
             found = False
             candidates = []
             elapsed = 0.0
+            asp_unsolvable = False
 
-            candidates, _ = solve([], atom_counts, output_list_of_smiles=True, timeout=args.timeout)
-            cand_canons = {canonical(s) for s in candidates} - {None}
-            found = gt_canon in cand_canons
-            if not found:
-                print(f"[{dataset_idx:4d}] UNSOLV | formula unreachable without any constraints | {gt_smi_raw[:60]}")
-                results.append({
-                    "idx": dataset_idx,
-                    "smiles": gt_smi_raw,
-                    "found": False,
-                    "n_candidates": 0,
-                    "elapsed_s": 0.0,
-                    "culprits": [],
-                    "asp_unsolvable": True,
-                })
-                continue
-
+            while True:
                 filtered_entries = {k: v for k, v in entries.items() if k not in known_buggy_keys}
                 interface = PredictionInterface.model_validate(filtered_entries)
                 asp_constraints, atom_counts = compile_asp_constraint(interface)
@@ -334,6 +322,15 @@ def main() -> None:
                 if found:
                     n_found += 1
                     break
+
+                # Miss — check if ASP can generate this molecule at all (unconstrained)
+                uc_candidates, _ = solve([], atom_counts, output_list_of_smiles=True, timeout=args.timeout)
+                uc_canons = {canonical(s) for s in uc_candidates} - {None}
+                if gt_canon not in uc_canons:
+                    print(f"    UNSOLV: formula unreachable without constraints (ASP coverage gap)")
+                    asp_unsolvable = True
+                    break
+
                 prev_count = len(known_buggy_keys)
                 culprits += diagnose_miss(entries, gt_canon, timeout=diagnose_timeout, known_buggy_keys=known_buggy_keys)
                 if len(known_buggy_keys) == prev_count:
@@ -347,7 +344,7 @@ def main() -> None:
                 "n_candidates": len(candidates),
                 "elapsed_s": round(elapsed, 2),
                 "culprits": [{"constraint": label, "value": val} for label, val in culprits],
-                "asp_unsolvable": False,
+                "asp_unsolvable": asp_unsolvable,
             })
 
     else:
@@ -412,6 +409,22 @@ def main() -> None:
 
     if args.report:
         import datetime
+        import re as _re
+        from rdkit.Chem import MACCSkeys as _MACCSkeys, rdMolDescriptors as _rdMD
+        _maccs_smarts = _MACCSkeys.smartsPatts
+
+        def _dou_from_mol(mol):
+            mol_h = Chem.AddHs(mol)
+            ac = {
+                "num_carbons":    sum(1 for a in mol_h.GetAtoms() if a.GetAtomicNum() == 6),
+                "num_hydrogens":  sum(1 for a in mol_h.GetAtoms() if a.GetAtomicNum() == 1),
+                "num_nitrogens":  sum(1 for a in mol_h.GetAtoms() if a.GetAtomicNum() == 7),
+                "num_oxygens":    sum(1 for a in mol_h.GetAtoms() if a.GetAtomicNum() == 8),
+                "num_sulfurs":    sum(1 for a in mol_h.GetAtoms() if a.GetAtomicNum() == 16),
+                "num_phosphorus": sum(1 for a in mol_h.GetAtoms() if a.GetAtomicNum() == 15),
+            }
+            return degrees_of_unsaturation(ac)
+
         lines = [
             "# Oracle Evaluation Report",
             f"**Date:** {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}",
@@ -432,28 +445,101 @@ def main() -> None:
         ]
 
         if args.diagnose and culprit_counts:
-            # Build constraint → list of SMILES mapping
-            constraint_to_smiles: dict[str, list[str]] = {}
+            # Build constraint → list of per-record dicts
+            constraint_to_records: dict[str, list[dict]] = {}
             for r in results:
                 for c in r["culprits"]:
-                    constraint_to_smiles.setdefault(c["constraint"], []).append(r["smiles"])
+                    constraint_to_records.setdefault(c["constraint"], []).append({
+                        "smiles": r["smiles"],
+                        "value": c["value"],
+                        "asp_unsolvable": r.get("asp_unsolvable", False),
+                    })
 
             lines += [
                 "## Buggy Constraints",
-                "Constraints confirmed as buggy across all missed records.",
-                "All listed constraints are definitively wrong.",
-                "",
-                "| Constraint | Molecules |",
-                "|------------|-----------|",
+                f"| Constraint | Count |",
+                f"|------------|-------|",
             ]
-            for label in sorted(constraint_to_smiles):
-                smiles_list = "; ".join(
-                    f"`{s[:50]}`" for s in constraint_to_smiles[label]
-                )
-                lines.append(f"| `{label}` | {smiles_list} |")
+            for label in sorted(culprit_counts):
+                lines.append(f"| `{label}` | {culprit_counts[label]} |")
             lines.append("")
 
-        misses = [r for r in results if not r["found"]]
+            lines.append("## Constraint Debug")
+            lines.append("")
+
+            for label in sorted(constraint_to_records):
+                m = _re.match(r'(MACCS|FVD)\[(\d+)\]\s+(\S+)', label)
+                if m:
+                    key_type, key_num, predicate = m.group(1), int(m.group(2)), m.group(3)
+                else:
+                    key_type, key_num, predicate = None, None, label
+
+                if key_type == "MACCS" and key_num in MACCS_DEFINITIONS:
+                    smarts = _maccs_smarts.get(key_num, ("?",))[0]
+                    definition = MACCS_DEFINITIONS[key_num].get("definition", "?").strip()
+                elif key_type == "FVD" and key_num in FEATURE_VECTOR_DEFINITIONS:
+                    smarts = "N/A"
+                    definition = FEATURE_VECTOR_DEFINITIONS[key_num].get("definition", "?")
+                else:
+                    smarts = "?"
+                    definition = "?"
+
+                smarts_pat = Chem.MolFromSmarts(smarts) if smarts not in ("?", "N/A") else None
+
+                lines += [
+                    f"### {label}",
+                    f"- **SMARTS:** `{smarts}`",
+                    f"- **ASP definition:**",
+                    "```",
+                    definition,
+                    "```",
+                    "",
+                    "| SMILES | Formula | DoU | Stored | RDKit | Verdict |",
+                    "|--------|---------|-----|--------|-------|---------|",
+                ]
+
+                for rec in constraint_to_records[label]:
+                    smi = rec["smiles"]
+                    stored_val = rec["value"]
+                    mol = Chem.MolFromSmiles(smi) if _HAS_RDKIT else None
+
+                    if mol is not None:
+                        formula = _rdMD.CalcMolFormula(mol)
+                        dou_str = f"{_dou_from_mol(mol):.1f}"
+                        if smarts_pat is not None:
+                            rdkit_match = mol.HasSubstructMatch(smarts_pat)
+                            rdkit_str = "True" if rdkit_match else "False"
+                            verdict = "ASP BUG" if bool(rdkit_match) == bool(stored_val) else "LABEL BUG"
+                        else:
+                            rdkit_str = "N/A"
+                            verdict = "UNKNOWN"
+                    else:
+                        formula, dou_str, rdkit_str, verdict = "?", "?", "?", "UNKNOWN"
+
+                    lines.append(
+                        f"| `{smi[:55]}` | {formula} | {dou_str}"
+                        f" | {stored_val} | {rdkit_str} | **{verdict}** |"
+                    )
+
+                lines.append("")
+
+        misses = [r for r in results if not r["found"] and not r.get("asp_unsolvable")]
+        unsolvable = [r for r in results if r.get("asp_unsolvable")]
+
+        if unsolvable:
+            lines += [
+                "## ASP Unsolvable Records",
+                "GT molecule not found even in unconstrained solve — smiles.lp coverage gap.",
+                "| # | SMILES | Formula | DoU |",
+                "|---|--------|---------|-----|",
+            ]
+            for r in unsolvable:
+                mol = Chem.MolFromSmiles(r["smiles"]) if _HAS_RDKIT else None
+                formula = _rdMD.CalcMolFormula(mol) if mol else "?"
+                dou_str = f"{_dou_from_mol(mol):.1f}" if mol else "?"
+                lines.append(f"| {r['idx']} | `{r['smiles'][:60]}` | {formula} | {dou_str} |")
+            lines.append("")
+
         if misses:
             lines += [
                 "## Missed Records",
