@@ -40,12 +40,6 @@ _DoU_GE1_PREDICATES = frozenset({
     "has_n_o_double_bond",
     "has_s_o_double_bond",
     "has_s_double_bond",
-    "has_n_c_o",
-    "has_o_c_o",
-    "has_n_a_n",
-    "has_o_aa_o",
-    "has_n_aa_n",
-    "has_n_aa_o",
 })
 
 _DoU_GE2_PREDICATES = frozenset({
