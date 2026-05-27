@@ -12,8 +12,8 @@ training:
 
 data:
   dataset_path: "data/MoNA-filtered-curated-with-maccs-and-structure-onehot.json"
-  schema_path: "data/feature_vector_onehot_schema.json"
-  # schema_path: "data/feature_vector_mixed_schema.json"
+  schema_path: "data/feature_vector_mixed_schema.json"
+  # schema_path: "data/feature_vector_onehot_schema.json"
   # dataset_path: "data/multitask_mlp_hardcoded.test.json"
 
 checkpointing:

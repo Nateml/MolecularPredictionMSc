@@ -230,3 +230,6 @@ CLAUDE.md
 
 # Oracle eval reports
 asp-bridge-diagnosis-*.md
+
+# Eval results
+eval_results.csv
