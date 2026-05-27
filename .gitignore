@@ -220,7 +220,7 @@ asp/debug/*
 src/asp/debug/*
 
 # Notebooks
-notebooks/*
+# notebooks/*
 
 # Claude
 CLAUDE.md
