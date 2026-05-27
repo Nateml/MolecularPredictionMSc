@@ -227,3 +227,6 @@ CLAUDE.md
 
 # Pickle
 *.pkl
+
+# Oracle eval reports
+asp-bridge-diagnosis-*.md

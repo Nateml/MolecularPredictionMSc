@@ -221,7 +221,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--output", default=None, metavar="FILE",
                    help="Save per-record results to a JSON file")
     p.add_argument("--report", default=None, metavar="FILE",
-                   help="Save a human-readable markdown report to FILE")
+                   help="Save a human-readable markdown report to FILE (default: asp-bridge-diagnosis-<timestamp>.md)")
     p.add_argument("--mol-size", choices=["small", "med", "large"], default=None,
                    help="Skip molecules above a DoU threshold: small≤1, med≤2, large≤4")
     p.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 1) // 2),
@@ -230,7 +230,10 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    import datetime
     args = parse_args()
+    if args.report is None:
+        args.report = f"asp-bridge-diagnosis-{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}.md"
     diagnose_timeout = args.diagnose_timeout if args.diagnose_timeout is not None else args.timeout
 
     data_path = Path(args.dataset) if args.dataset else config.data.resolved_dataset_path()
@@ -408,10 +411,14 @@ def main() -> None:
         print(f"Results saved to {args.output}")
 
     if args.report:
-        import datetime
+        import bisect as _bisect
+        import json as _json
         import re as _re
         from rdkit.Chem import MACCSkeys as _MACCSkeys, rdMolDescriptors as _rdMD
         _maccs_smarts = _MACCSkeys.smartsPatts
+        _feature_schema = _json.load(open(schema_path)).get("feature_schema", {})
+        _smiles_to_idx = {canonical(gt_smi_raw): dataset_idx
+                          for dataset_idx, gt_smi_raw, *_ in work_items}
 
         def _dou_from_mol(mol):
             mol_h = Chem.AddHs(mol)
@@ -474,28 +481,41 @@ def main() -> None:
                 else:
                     key_type, key_num, predicate = None, None, label
 
+                # --- metadata per constraint type ---
                 if key_type == "MACCS" and key_num in MACCS_DEFINITIONS:
                     smarts = _maccs_smarts.get(key_num, ("?",))[0]
                     definition = MACCS_DEFINITIONS[key_num].get("definition", "?").strip()
+                    smarts_pat = Chem.MolFromSmarts(smarts) if smarts and smarts != "?" else None
+                    check_col = "RDKit match"
                 elif key_type == "FVD" and key_num in FEATURE_VECTOR_DEFINITIONS:
-                    smarts = "N/A"
-                    definition = FEATURE_VECTOR_DEFINITIONS[key_num].get("definition", "?")
+                    definition = FEATURE_VECTOR_DEFINITIONS[key_num].get("definition", "?").strip()
+                    # parse feat name and bin index from predicate e.g. "aldehyde_bin_1"
+                    bm = _re.match(r'(.+)_bin_(\d+)$', predicate)
+                    if bm:
+                        _feat_name = bm.group(1)
+                        _feat_info = _feature_schema.get(_feat_name, {})
+                        _edges = _feat_info.get("edges", [])
+                        _labels = _feat_info.get("labels", [])
+                    else:
+                        _feat_name = predicate
+                        _feat_info, _edges, _labels = {}, [], []
+                    smarts = f"feature '{_feat_name}', edges={_edges}"
+                    smarts_pat = None
+                    check_col = "actual val → bin"
                 else:
-                    smarts = "?"
-                    definition = "?"
-
-                smarts_pat = Chem.MolFromSmarts(smarts) if smarts not in ("?", "N/A") else None
+                    smarts, definition, smarts_pat = "?", "?", None
+                    check_col = "check"
 
                 lines += [
                     f"### {label}",
-                    f"- **SMARTS:** `{smarts}`",
+                    f"- **Check:** `{smarts}`",
                     f"- **ASP definition:**",
                     "```",
                     definition,
                     "```",
                     "",
-                    "| SMILES | Formula | DoU | Stored | RDKit | Verdict |",
-                    "|--------|---------|-----|--------|-------|---------|",
+                    f"| SMILES | Formula | DoU | Stored | {check_col} | Verdict |",
+                    f"|--------|---------|-----|--------|{'----------' * 2}|---------|",
                 ]
 
                 for rec in constraint_to_records[label]:
@@ -503,22 +523,39 @@ def main() -> None:
                     stored_val = rec["value"]
                     mol = Chem.MolFromSmiles(smi) if _HAS_RDKIT else None
 
-                    if mol is not None:
-                        formula = _rdMD.CalcMolFormula(mol)
-                        dou_str = f"{_dou_from_mol(mol):.1f}"
-                        if smarts_pat is not None:
-                            rdkit_match = mol.HasSubstructMatch(smarts_pat)
-                            rdkit_str = "True" if rdkit_match else "False"
-                            verdict = "ASP BUG" if bool(rdkit_match) == bool(stored_val) else "LABEL BUG"
+                    if mol is None:
+                        lines.append(f"| `{smi[:55]}` | ? | ? | {stored_val} | ? | **UNKNOWN** |")
+                        continue
+
+                    formula = _rdMD.CalcMolFormula(mol)
+                    dou_str = f"{_dou_from_mol(mol):.1f}"
+
+                    if key_type == "MACCS" and smarts_pat is not None:
+                        rdkit_match = mol.HasSubstructMatch(smarts_pat)
+                        check_str = "True" if rdkit_match else "False"
+                        verdict = "ASP BUG" if bool(rdkit_match) == bool(stored_val) else "LABEL BUG"
+
+                    elif key_type == "FVD" and bm:
+                        rec_idx = _smiles_to_idx.get(canonical(smi))
+                        if rec_idx is not None:
+                            sf = dataset._load_record(rec_idx).get("structural_features", {})
+                            actual_val = sf.get(_feat_name)
+                            if actual_val is not None:
+                                actual_bin = _bisect.bisect_left(_edges, float(actual_val))
+                                stored_bin = int(bm.group(2))
+                                bin_label = _labels[actual_bin] if actual_bin < len(_labels) else "?"
+                                check_str = f"{actual_val} → bin {actual_bin} ({bin_label})"
+                                verdict = "ASP BUG" if actual_bin == stored_bin else "LABEL BUG"
+                            else:
+                                check_str, verdict = "no SF data", "UNKNOWN"
                         else:
-                            rdkit_str = "N/A"
-                            verdict = "UNKNOWN"
+                            check_str, verdict = "record not found", "UNKNOWN"
                     else:
-                        formula, dou_str, rdkit_str, verdict = "?", "?", "?", "UNKNOWN"
+                        check_str, verdict = "N/A", "UNKNOWN"
 
                     lines.append(
                         f"| `{smi[:55]}` | {formula} | {dou_str}"
-                        f" | {stored_val} | {rdkit_str} | **{verdict}** |"
+                        f" | {stored_val} | {check_str} | **{verdict}** |"
                     )
 
                 lines.append("")
