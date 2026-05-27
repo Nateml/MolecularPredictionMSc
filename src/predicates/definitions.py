@@ -530,25 +530,24 @@ HELPER_PREDICATES: Dict[str, str] = {
             M = 12 * c + 1 * h + 14 * n + 16 * o.
     """,
 
-    # NOTE: current smiles.lp exposes neutral N with base valence 3.
+    # smiles.lp N is always neutral valence-3; every N atom contributes total
+    # valence 3 (explicit bonds + implicit H = 3) regardless of hybridization.
+    # free_bonds = implicit-H count, NOT a valence indicator.
     "n_valence_1_count": """
-        n_valence_1_count(N) :-
-            N = #count { I : symbol(I, "N"), free_bonds(I, 2) }.
+        n_valence_1_count(0).
     """,
 
     "n_valence_2_count": """
-        n_valence_2_count(N) :-
-            N = #count { I : symbol(I, "N"), free_bonds(I, 1) }.
+        n_valence_2_count(0).
     """,
 
     "n_valence_3_count": """
         n_valence_3_count(N) :-
-            N = #count { I : symbol(I, "N"), free_bonds(I, 0) }.
+            N = #count { I : symbol(I, "N") }.
     """,
 
     "n_valence_4plus_count": """
-        n_valence_4plus_count(N) :-
-            N = #count { I : symbol(I, "N"), free_bonds(I, F), F < 0 }.
+        n_valence_4plus_count(0).
     """,
 
     "nitrile_atom": """
@@ -586,29 +585,31 @@ HELPER_PREDICATES: Dict[str, str] = {
         nitro_count(N) :- nitro_count_value(N).
     """,
 
+    # smiles.lp O is always neutral valence-2; every O atom contributes total
+    # valence 2 (explicit bonds + implicit H = 2) regardless of bonding.
     "o_valence_1_count": """
-        o_valence_1_count(N) :-
-            N = #count { I : symbol(I, "O"), free_bonds(I, 2) }.
+        o_valence_1_count(0).
     """,
 
     "o_valence_2_count": """
         o_valence_2_count(N) :-
-            N = #count { I : symbol(I, "O"), free_bonds(I, 1) }.
+            N = #count { I : symbol(I, "O") }.
     """,
 
     "o_valence_3plus_count": """
-        o_valence_3plus_count(N) :-
-            N = #count { I : symbol(I, "O"), free_bonds(I, F), F <= 0 }.
+        o_valence_3plus_count(0).
     """,
 
+    # smiles.lp splits P into P3 (valence 3) and P5 (valence 5); use the
+    # symbol type directly instead of free_bonds (which is implicit-H count).
     "p_valence_3_count": """
         p_valence_3_count(N) :-
-            N = #count { I : smiles_symbol(I, "P"), free_bonds(I, 0) }.
+            N = #count { I : symbol(I, "P3") }.
     """,
 
     "p_valence_5plus_count": """
         p_valence_5plus_count(N) :-
-            N = #count { I : smiles_symbol(I, "P"), free_bonds(I, F), F < 0 }.
+            N = #count { I : symbol(I, "P5") }.
     """,
 
     "s_valence_2_count": """
