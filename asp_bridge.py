@@ -2,16 +2,16 @@
 
 import os
 import re
+import sys
 import clingo
 import math
-import typing
 import argparse
 from pathlib import Path
+from predicates.interface import PredictionInterface, PredictionEntry
+from predicates.compiler import compile_asp_constraint
 
 # Benchmarked sweet spot on 16-CPU machine; cap at cpu_count for portability.
 _CLINGO_THREADS = min(6, os.cpu_count() or 1)
-from predicates.interface import PredictionInterface, PredictionEntry
-from predicates.compiler import compile_asp_constraint
 
 _ASP_DIR = Path(__file__).resolve().parent / "src" / "asp"
 
@@ -56,13 +56,16 @@ _DoU_GE2_PREDICATES = frozenset({
 
 def degrees_of_unsaturation(atom_counts: dict) -> float:
     """Return DoU for a formula. Non-integer or negative means invalid formula."""
-    numerator = (
+    return _dou_numerator(atom_counts) / 2
+
+
+def _dou_numerator(atom_counts: dict) -> int:
+    return (
         2 * atom_counts.get("num_carbons", 0)
         + 2
         + atom_counts.get("num_nitrogens", 0)
         - atom_counts.get("num_hydrogens", 0)
     )
-    return numerator / 2
 
 
 def _min_required_dou(asp_code: list[str]) -> int:
@@ -203,22 +206,10 @@ def _model_to_smiles(model_str: str) -> str:
     return to_smiles(1)
 
 
-def solve(asp_code: list[str], atom_counts: int, output_list_of_smiles: bool = False, debug=False, timeout: int = 0, canonicalize: bool = False) -> typing.Tuple[str, int]:
-    """
-    Runs the ASP program with the given input and returns the results.
-
-    Args:
-        asp_code (list[str]): A list of strings representing additional ASP code
-        atom_counts (dict): Atom count constraints for the formula
-        output_list_of_smiles (bool): If True, return list of SMILES strings
-        debug (bool): If True, print debug information
-        timeout (int): Wall-clock time limit in seconds for the solve phase (0 = no limit)
-
-    Returns:
-        list: A list of candidate molecules returned by the ASP program
-    """
-    dou = degrees_of_unsaturation(atom_counts)
-    if dou < 0 or dou != int(dou) or dou < _min_required_dou(asp_code):
+def solve(asp_code: list[str], atom_counts: dict, output_list_of_smiles: bool = False, debug=False, timeout: int = 0, canonicalize: bool = False) -> tuple[list | str, int]:
+    """Run ASP solver and return (SMILES list or formatted string, candidate count)."""
+    dou_num = _dou_numerator(atom_counts)
+    if dou_num < 0 or dou_num % 2 != 0 or dou_num / 2 < _min_required_dou(asp_code):
         return ([] if output_list_of_smiles else "", 0)
 
     flags = [
@@ -252,8 +243,7 @@ def solve(asp_code: list[str], atom_counts: int, output_list_of_smiles: bool = F
     with ctl.solve(async_=True, on_model=on_model) as handle:
         finished = handle.wait(timeout if timeout > 0 else None)
         if not finished:
-            import sys as _sys
-            print(f"Warning: ASP solve timed out after {timeout}s; results may be incomplete.", file=_sys.stderr)
+            print(f"Warning: ASP solve timed out after {timeout}s; results may be incomplete.", file=sys.stderr)
             handle.cancel()
 
     model_count = len(models_raw)
@@ -269,10 +259,10 @@ def solve(asp_code: list[str], atom_counts: int, output_list_of_smiles: bool = F
             return canonical, model_count
         return visualisations, model_count
 
-    final_output = ""
-    for i, (vis, asp) in enumerate(zip(visualisations, models_raw)):
-        final_output += f"CANDIDATE {i}:\n{vis}\n{asp}\n\n"
-
+    final_output = "".join(
+        f"CANDIDATE {i}:\n{vis}\n{asp}\n\n"
+        for i, (vis, asp) in enumerate(zip(visualisations, models_raw))
+    )
     return final_output, model_count
 
 def main():
@@ -306,7 +296,7 @@ def main():
         args.oxygens = 1
 
     predictions = {}
-    
+
     # Handle prediction IDs and their associated sets
     if args.pred_sets:
         for i, pred_id in enumerate(args.pred_ids):
@@ -327,15 +317,6 @@ def main():
     predictions['num_sulfurs'] = args.sulfurs
     predictions['num_phosphorus'] = args.phosphorus
 
-    # Example predictions
-    # predictions = {
-        # 154: PredictionEntry(pred_set=[1], alpha=0.05, proba=[0.98]),
-        # 'num_carbons': args.carbons,
-        # 'num_hydrogens': args.hydrogens,
-        # 'num_nitrogens': args.nitrogens,
-        # 'num_oxygens': args.oxygens,
-    # }
-    
     interface = PredictionInterface.model_validate(predictions)
     asp_constraints, atom_counts = compile_asp_constraint(interface)
     if args.show_constraints:
