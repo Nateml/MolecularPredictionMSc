@@ -1,11 +1,15 @@
 # Description: Interfaces with the ASP program
 
+import os
 import re
 import clingo
 import math
 import typing
 import argparse
 from pathlib import Path
+
+# Benchmarked sweet spot on 16-CPU machine; cap at cpu_count for portability.
+_CLINGO_THREADS = min(6, os.cpu_count() or 1)
 from predicates.interface import PredictionInterface, PredictionEntry
 from predicates.compiler import compile_asp_constraint
 
@@ -13,6 +17,65 @@ _ASP_DIR = Path(__file__).resolve().parent / "src" / "asp"
 
 # Elements parametrized in smiles.lp (C/H/N/O/P/S only).
 _ASP_ELEMENTS = {"C", "H", "N", "O", "P", "S"}
+
+# ---------------------------------------------------------------------------
+# Degree of Unsaturation (DoU) filter
+#
+# DoU = (2C + 2 + N - H) / 2  (for C/H/N-only; O and S don't affect DoU)
+#
+# Certain structural predicates are only satisfiable when DoU meets a minimum:
+#   DoU >= 1: any ring or double bond (ring, C=O, C=C, C=N, N=O, S=O, ...)
+#   DoU >= 2: triple bond (C≡C, C≡N)
+#
+# When a constraint forces one of these predicates to be true (:- not <pred>.)
+# but the formula has insufficient DoU, the ASP solve will always return 0
+# candidates. We detect this cheaply and skip the solve entirely.
+# ---------------------------------------------------------------------------
+
+_DoU_GE1_PREDICATES = frozenset({
+    "has_ring",
+    "has_carbonyl",
+    "has_c_c_double_bond",
+    "has_c_n_double_bond",
+    "has_n_o_double_bond",
+    "has_s_o_double_bond",
+    "has_s_double_bond",
+    "has_n_c_o",
+    "has_o_c_o",
+    "has_n_a_n",
+    "has_o_aa_o",
+    "has_n_aa_n",
+    "has_n_aa_o",
+})
+
+_DoU_GE2_PREDICATES = frozenset({
+    "has_c_c_triple_bond",
+    "has_c_n_triple_bond",
+})
+
+
+def degrees_of_unsaturation(atom_counts: dict) -> float:
+    """Return DoU for a formula. Non-integer or negative means invalid formula."""
+    numerator = (
+        2 * atom_counts.get("num_carbons", 0)
+        + 2
+        + atom_counts.get("num_nitrogens", 0)
+        - atom_counts.get("num_hydrogens", 0)
+    )
+    return numerator / 2
+
+
+def _min_required_dou(asp_code: list[str]) -> int:
+    """Scan compiled ASP constraints for predicates that imply a minimum DoU."""
+    for line in asp_code:
+        for pred in _DoU_GE2_PREDICATES:
+            if f"not {pred}" in line:
+                return 2
+    for line in asp_code:
+        for pred in _DoU_GE1_PREDICATES:
+            if f"not {pred}" in line:
+                return 1
+    return 0
 
 
 def is_asp_supported(smiles: str) -> tuple[bool, str]:
@@ -154,6 +217,9 @@ def solve(asp_code: list[str], atom_counts: int, output_list_of_smiles: bool = F
     Returns:
         list: A list of candidate molecules returned by the ASP program
     """
+    dou = degrees_of_unsaturation(atom_counts)
+    if dou < 0 or dou != int(dou) or dou < _min_required_dou(asp_code):
+        return ([] if output_list_of_smiles else "", 0)
 
     flags = [
         '0',
@@ -163,6 +229,7 @@ def solve(asp_code: list[str], atom_counts: int, output_list_of_smiles: bool = F
         f'-c o={atom_counts["num_oxygens"]}',
         f'-c s={atom_counts["num_sulfurs"]}',
         f'-c p={atom_counts["num_phosphorus"]}',
+        f'-t {_CLINGO_THREADS}'
     ]
     ctl = clingo.Control(flags)
 
