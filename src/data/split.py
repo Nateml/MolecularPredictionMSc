@@ -298,8 +298,9 @@ def _allocate_grouped_strata(
     seed: int,
 ) -> dict[str, list[int]]:
     total_records = sum(len(indices) for indices in grouped_indices)
-    desired_totals = {
-        split_name: total_records * fraction
+    # Use integer desired counts (rounded) to avoid tiny fractional targets
+    desired_counts = {
+        split_name: int(round(total_records * fraction)) if fraction > 0 else 0
         for split_name, fraction in zip(split_names, split_fractions)
     }
 
@@ -333,7 +334,9 @@ def _allocate_grouped_strata(
 
         for split_name in split_names:
             prospective_total = split_totals[split_name] + group_size
-            total_score = abs(prospective_total - desired_totals[split_name])
+            # Compare against integer desired counts when possible
+            target_total = desired_counts.get(split_name, total_records * split_fractions[split_names.index(split_name)])
+            total_score = abs(prospective_total - target_total)
 
             prospective_stratum_total = split_stratum_totals[split_name][strata_key] + group_size
             stratum_score = abs(
@@ -347,6 +350,36 @@ def _allocate_grouped_strata(
 
         split_records[best_split_name].extend(indices)
         split_totals[best_split_name] += group_size
+    # If any split with a positive desired count ended up empty, fall back to
+    # a deterministic grouped round-robin to guarantee at least some records
+    # are assigned to each requested split.
+    counts = {name: len(split_records[name]) for name in split_names}
+    need_fix = any(desired_counts.get(name, 0) > 0 and counts.get(name, 0) == 0 for name in split_names)
+    if need_fix:
+        # Rebuild assignment deterministically to respect grouped units
+        split_records = {name: [] for name in split_names}
+        split_totals = {name: 0 for name in split_names}
+        # Desired counts sum may not equal total_records due to rounding; compute target per split
+        targets = dict(desired_counts)
+        remaining = total_records - sum(targets.values())
+        if remaining > 0:
+            # add remaining to the largest-fraction split
+            max_idx = max(range(len(split_fractions)), key=lambda i: split_fractions[i])
+            targets[split_names[max_idx]] += remaining
+
+        for grp in grouped_indices:
+            # pick first split that still needs records, else the split with largest fraction
+            placed = False
+            for name in split_names:
+                if split_totals[name] < targets.get(name, 0):
+                    split_records[name].extend(grp)
+                    split_totals[name] += len(grp)
+                    placed = True
+                    break
+            if not placed:
+                # all targets satisfied; append to the split with largest fraction
+                split_records[split_names[max_idx]].extend(grp)
+                split_totals[split_names[max_idx]] += len(grp)
         split_stratum_totals[best_split_name][strata_key] += group_size
 
     return split_records
