@@ -12,6 +12,7 @@ Usage:
     python oracle_eval.py --show-constraints --limit 5
     python oracle_eval.py --diagnose --limit 10
     python oracle_eval.py --output results.json
+    python oracle_eval.py --mol-size small --limit 100
 """
 from __future__ import annotations
 
@@ -32,7 +33,9 @@ from data.datasets import dataset_from_schema, RawFeatureDataset
 from predicates.definitions import MACCS_DEFINITIONS, FEATURE_VECTOR_DEFINITIONS
 from predicates.interface import PredictionInterface, PredictionEntry
 from predicates.compiler import compile_asp_constraint
-from asp_bridge import solve, is_asp_supported
+from asp_bridge import solve, is_asp_supported, degrees_of_unsaturation
+
+_MOL_SIZE_MAX_DOU = {"small": 1, "med": 2, "large": 4}
 
 try:
     from rdkit import Chem
@@ -164,6 +167,20 @@ def _solve_record(
     timeout: int,
 ) -> dict:
     """Worker: solve one record. Module-level so ProcessPoolExecutor can pickle it."""
+    candidates, _ = solve([], atom_counts, output_list_of_smiles=True, timeout=timeout)
+    cand_canons = {canon(s) for s in candidates} - {None}
+    found = gt_canon in cand_canons
+    if not found:
+        return {
+            "idx": dataset_idx,
+            "smiles": gt_smi_raw,
+            "found": False,
+            "n_candidates": 0,
+            "elapsed_s": 0.0,
+            "culprits": [],
+            "asp_unsolvable": True,
+        }
+
     t0 = time.monotonic()
     candidates, _ = solve(asp_constraints, atom_counts, output_list_of_smiles=True, timeout=timeout)
     elapsed = time.monotonic() - t0
@@ -176,6 +193,7 @@ def _solve_record(
         "n_candidates": len(candidates),
         "elapsed_s": round(elapsed, 2),
         "culprits": [],
+        "asp_unsolvable": False,
     }
 
 
@@ -202,8 +220,8 @@ def parse_args() -> argparse.Namespace:
                    help="Save per-record results to a JSON file")
     p.add_argument("--report", default=None, metavar="FILE",
                    help="Save a human-readable markdown report to FILE")
-    p.add_argument("--mol-size-limit", type=int, default=None,
-                   help="Skip molecules with more than this many total atoms")
+    p.add_argument("--mol-size", choices=["small", "med", "large"], default=None,
+                   help="Skip molecules above a DoU threshold: small≤1, med≤2, large≤4")
     p.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 1) // 2),
                    help="Parallel worker processes for solving (default: cpu_count//2, ignored with --diagnose)")
     return p.parse_args()
@@ -251,8 +269,8 @@ def main() -> None:
         interface = PredictionInterface.model_validate(entries)
         asp_constraints, atom_counts = compile_asp_constraint(interface)
 
-        mol_size = sum(atom_counts.values())
-        if args.mol_size_limit and mol_size > args.mol_size_limit:
+        dou = degrees_of_unsaturation(atom_counts)
+        if args.mol_size and dou > _MOL_SIZE_MAX_DOU[args.mol_size]:
             n_skip += 1
             continue
 
@@ -263,7 +281,7 @@ def main() -> None:
                        f"O{atom_counts.get('num_oxygens',0)}"
                        f"P{atom_counts.get('num_phosphorus',0)}"
                        f"S{atom_counts.get('num_sulfurs',0)}")
-            print(f"\n[{dataset_idx}] {gt_smi_raw[:70]}  formula={formula}  {mol_size} atoms")
+            print(f"\n[{dataset_idx}] {gt_smi_raw[:70]}  formula={formula}  DoU={dou:.1f}")
         if args.show_constraints:
             for c in asp_constraints:
                 print(f"  {c}")
@@ -283,7 +301,22 @@ def main() -> None:
             candidates = []
             elapsed = 0.0
 
-            while True:
+            candidates, _ = solve([], atom_counts, output_list_of_smiles=True, timeout=args.timeout)
+            cand_canons = {canonical(s) for s in candidates} - {None}
+            found = gt_canon in cand_canons
+            if not found:
+                print(f"[{dataset_idx:4d}] UNSOLV | formula unreachable without any constraints | {gt_smi_raw[:60]}")
+                results.append({
+                    "idx": dataset_idx,
+                    "smiles": gt_smi_raw,
+                    "found": False,
+                    "n_candidates": 0,
+                    "elapsed_s": 0.0,
+                    "culprits": [],
+                    "asp_unsolvable": True,
+                })
+                continue
+
                 filtered_entries = {k: v for k, v in entries.items() if k not in known_buggy_keys}
                 interface = PredictionInterface.model_validate(filtered_entries)
                 asp_constraints, atom_counts = compile_asp_constraint(interface)
@@ -314,6 +347,7 @@ def main() -> None:
                 "n_candidates": len(candidates),
                 "elapsed_s": round(elapsed, 2),
                 "culprits": [{"constraint": label, "value": val} for label, val in culprits],
+                "asp_unsolvable": False,
             })
 
     else:
@@ -325,7 +359,12 @@ def main() -> None:
             }
             for future in as_completed(futures):
                 result = future.result()
-                tag = "FOUND" if result["found"] else "MISS "
+                if result.get("asp_unsolvable"):
+                    tag = "UNSOLV"
+                elif result["found"]:
+                    tag = "FOUND "
+                else:
+                    tag = "MISS  "
                 print(f"[{result['idx']:4d}] {tag} | {result['n_candidates']:4d} candidates | {result['elapsed_s']:5.1f}s | {result['smiles'][:60]}")
                 if result["found"]:
                     n_found += 1
@@ -334,12 +373,15 @@ def main() -> None:
         results.sort(key=lambda r: r["idx"])
 
     n_eval = len(results)
-    recall = 100 * n_found / n_eval if n_eval else 0.0
+    n_asp_unsolvable = sum(1 for r in results if r.get("asp_unsolvable"))
+    n_solvable = n_eval - n_asp_unsolvable
+    recall = 100 * n_found / n_solvable if n_solvable else 0.0
     print(f"\n=== Summary ===")
-    print(f"Evaluated : {n_eval}")
-    print(f"Found     : {n_found} / {n_eval}  ({recall:.1f}% recall)")
+    print(f"Evaluated     : {n_eval}")
+    print(f"ASP unsolvable: {n_asp_unsolvable}  (formula unreachable even without constraints)")
+    print(f"Found         : {n_found} / {n_solvable}  ({recall:.1f}% recall on solvable)")
     if n_skip:
-        print(f"Skipped   : {n_skip}  (unsupported, unparseable, or too large)")
+        print(f"Skipped       : {n_skip}  (unsupported, unparseable, or DoU above --mol-size threshold)")
 
     if args.diagnose:
         culprit_counts: dict[str, int] = {}
@@ -358,6 +400,7 @@ def main() -> None:
             "summary": {
                 "n_eval": n_eval,
                 "n_found": n_found,
+                "n_asp_unsolvable": n_asp_unsolvable,
                 "recall_pct": round(recall, 2),
                 "n_skipped": n_skip,
             },
@@ -373,16 +416,17 @@ def main() -> None:
             "# Oracle Evaluation Report",
             f"**Date:** {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}",
             f"**Dataset:** {data_path.name}",
-            f"**Molecule size limit:** {args.mol_size_limit or 'none'}",
+            f"**Molecule size:** {args.mol_size or 'none'} (DoU ≤ {_MOL_SIZE_MAX_DOU[args.mol_size]} )" if args.mol_size else "**Molecule size:** none",
             f"**Solve timeout:** {args.timeout}s",
             "",
             "## Summary",
             f"| Metric | Value |",
             f"|--------|-------|",
             f"| Records evaluated | {n_eval} |",
+            f"| ASP unsolvable | {n_asp_unsolvable} |",
             f"| Found | {n_found} |",
-            f"| Missed | {n_eval - n_found} |",
-            f"| Recall | {recall:.1f}% |",
+            f"| Missed | {n_solvable - n_found} |",
+            f"| Recall (solvable) | {recall:.1f}% |",
             f"| Skipped | {n_skip} |",
             "",
         ]
