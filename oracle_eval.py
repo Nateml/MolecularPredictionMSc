@@ -35,7 +35,8 @@ from predicates.interface import PredictionInterface, PredictionEntry
 from predicates.compiler import compile_asp_constraint
 from asp_bridge import solve, is_asp_supported, degrees_of_unsaturation
 
-_MOL_SIZE_MAX_DOU = {"small": 1, "med": 2, "large": 4}
+_MOL_SIZE_MAX_DOU        = {"small": 1,  "med": 2,    "large": 4}
+_MOL_SIZE_MAX_HEAVY_ATOMS = {"small": 12, "med": 20, "large": None}
 
 try:
     from rdkit import Chem
@@ -223,7 +224,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--report", default=None, metavar="FILE",
                    help="Save a human-readable markdown report to FILE (default: asp-bridge-diagnosis-<timestamp>.md)")
     p.add_argument("--mol-size", choices=["small", "med", "large"], default=None,
-                   help="Skip molecules above a DoU threshold: small≤1, med≤2, large≤4")
+                   help="Skip molecules above DoU/atom thresholds: small(DoU≤1,heavy<12), med(DoU≤2), large(DoU≤4)")
     p.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 1) // 2),
                    help="Parallel worker processes for solving (default: cpu_count//2, ignored with --diagnose)")
     return p.parse_args()
@@ -275,7 +276,12 @@ def main() -> None:
         asp_constraints, atom_counts = compile_asp_constraint(interface)
 
         dou = degrees_of_unsaturation(atom_counts)
-        if args.mol_size and dou > _MOL_SIZE_MAX_DOU[args.mol_size]:
+        n_heavy = sum(v for k, v in atom_counts.items() if k != "num_hydrogens")
+        max_heavy = _MOL_SIZE_MAX_HEAVY_ATOMS.get(args.mol_size or "")
+        if args.mol_size and (
+            dou > _MOL_SIZE_MAX_DOU[args.mol_size]
+            or (max_heavy is not None and n_heavy >= max_heavy)
+        ):
             n_skip += 1
             continue
 
@@ -307,6 +313,7 @@ def main() -> None:
             elapsed = 0.0
             asp_unsolvable = False
 
+            print(f"[{dataset_idx:4d}] solving: {gt_smi_raw[:80]}")
             while True:
                 filtered_entries = {k: v for k, v in entries.items() if k not in known_buggy_keys}
                 interface = PredictionInterface.model_validate(filtered_entries)
@@ -353,10 +360,10 @@ def main() -> None:
     else:
         print(f"Solving {len(work_items)} records with {args.workers} worker(s)...")
         with ProcessPoolExecutor(max_workers=args.workers) as pool:
-            futures = {
-                pool.submit(_solve_record, dataset_idx, gt_smi_raw, gt_canon, asp_constraints, atom_counts, args.timeout): dataset_idx
-                for dataset_idx, gt_smi_raw, gt_canon, asp_constraints, atom_counts, _ in work_items
-            }
+            futures = {}
+            for dataset_idx, gt_smi_raw, gt_canon, asp_constraints, atom_counts, _ in work_items:
+                print(f"[{dataset_idx:4d}] submitting: {gt_smi_raw[:80]}")
+                futures[pool.submit(_solve_record, dataset_idx, gt_smi_raw, gt_canon, asp_constraints, atom_counts, args.timeout)] = dataset_idx
             for future in as_completed(futures):
                 result = future.result()
                 if result.get("asp_unsolvable"):
