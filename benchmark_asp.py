@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import statistics
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -24,6 +25,55 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from asp_bridge import solve
 from predicates.compiler import compile_asp_constraint
 from predicates.interface import PredictionEntry, PredictionInterface
+
+# ---------------------------------------------------------------------------
+# Memory tracking
+# ---------------------------------------------------------------------------
+
+def _current_rss_kb() -> int:
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1])
+    except OSError:
+        pass
+    import resource
+    rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    # Linux returns KB, macOS returns bytes
+    return rss if sys.platform != "darwin" else rss // 1024
+
+
+class PeakMemoryMonitor:
+    """Context manager that polls VmRSS every `interval` seconds and records the peak."""
+
+    def __init__(self, interval: float = 0.01):
+        self._interval = interval
+        self._peak_kb = 0
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def __enter__(self) -> "PeakMemoryMonitor":
+        self._peak_kb = _current_rss_kb()
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        return self
+
+    def _run(self) -> None:
+        while not self._stop.wait(self._interval):
+            rss = _current_rss_kb()
+            if rss > self._peak_kb:
+                self._peak_kb = rss
+
+    def __exit__(self, *_) -> None:
+        self._stop.set()
+        if self._thread:
+            self._thread.join()
+
+    @property
+    def peak_mb(self) -> float:
+        return self._peak_kb / 1024
 
 # ---------------------------------------------------------------------------
 # Test formulas
@@ -107,23 +157,26 @@ def run_benchmark(
         asp_code = _build_asp_code(atom_counts, pred_entries)
 
         times: list[float] = []
+        peak_mbs: list[float] = []
         n_candidates = 0
         error: str | None = None
 
         print(f"  {label} ... ", end="", flush=True)
         for run in range(n_runs):
             try:
-                t0 = time.monotonic()
-                candidates, count = solve(
-                    asp_code,
-                    atom_counts,
-                    output_list_of_smiles=True,
-                    timeout=timeout,
-                )
-                elapsed = time.monotonic() - t0
+                with PeakMemoryMonitor() as mem:
+                    t0 = time.monotonic()
+                    candidates, count = solve(
+                        asp_code,
+                        atom_counts,
+                        output_list_of_smiles=True,
+                        timeout=timeout,
+                    )
+                    elapsed = time.monotonic() - t0
                 times.append(elapsed)
+                peak_mbs.append(mem.peak_mb)
                 n_candidates = count
-                print(f"{elapsed:.2f}s ", end="", flush=True)
+                print(f"{elapsed:.2f}s/{mem.peak_mb:.0f}MB ", end="", flush=True)
             except Exception as exc:
                 error = str(exc)
                 print(f"ERROR({exc}) ", end="", flush=True)
@@ -139,6 +192,7 @@ def run_benchmark(
                 "min_s": min(times),
                 "max_s": max(times),
                 "stdev_s": statistics.stdev(times) if len(times) > 1 else 0.0,
+                "peak_mb": max(peak_mbs),
                 "n_candidates": n_candidates,
                 "error": error,
             })
@@ -150,6 +204,7 @@ def run_benchmark(
                 "min_s": float("nan"),
                 "max_s": float("nan"),
                 "stdev_s": float("nan"),
+                "peak_mb": float("nan"),
                 "n_candidates": 0,
                 "error": error,
             })
@@ -158,10 +213,10 @@ def run_benchmark(
 
 
 def print_table(results: list[dict]) -> None:
-    col_label  = max(len(r["label"]) for r in results)
+    col_label = max(len(r["label"]) for r in results)
     header = (
         f"{'Formula':<{col_label}}  {'mean(s)':>8}  {'min(s)':>7}  {'max(s)':>7}"
-        f"  {'stdev':>6}  {'cands':>6}  {'runs':>4}"
+        f"  {'stdev':>6}  {'peak MB':>7}  {'cands':>6}  {'runs':>4}"
     )
     sep = "-" * len(header)
     print(f"\n{sep}")
@@ -177,6 +232,7 @@ def print_table(results: list[dict]) -> None:
             f"  {r['min_s']:>7.3f}"
             f"  {r['max_s']:>7.3f}"
             f"  {r['stdev_s']:>6.3f}"
+            f"  {r['peak_mb']:>7.1f}"
             f"  {r['n_candidates']:>6}"
             f"  {r['runs']:>4}"
         )
@@ -187,6 +243,7 @@ def print_table(results: list[dict]) -> None:
         total = sum(r["mean_s"] * r["runs"] for r in valid)
         print(f"\n  Total wall-clock (all runs): {total:.2f}s")
         print(f"  Mean per solve call:         {statistics.mean(r['mean_s'] for r in valid):.3f}s")
+        print(f"  Peak memory (max across all): {max(r['peak_mb'] for r in valid):.1f} MB")
 
 
 def parse_args() -> argparse.Namespace:
