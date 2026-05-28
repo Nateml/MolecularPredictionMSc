@@ -88,9 +88,9 @@ def calibrate_model(
     model,
     calibration_loader: DataLoader,
     alpha: float,
-    quantiles: list[float] = [0.1, 0.5, 0.9],
+    quantiles: list[float] = [0.025, 0.05, 0.5, 0.95, 0.975],
     quantile_low_idx: int = 0,
-    quantile_high_idx: int = 2,
+    quantile_high_idx: int = 4,
 ) -> dict:
     """
     Compute conformal prediction thresholds from a calibration set.
@@ -182,7 +182,7 @@ def sets_from_outputs(
     outputs: dict,
     thresholds: dict,
     quantile_low_idx: int = 0,
-    quantile_high_idx: int = 2,
+    quantile_high_idx: int = 4,
 ) -> dict:
     """
     Compute conformal prediction sets from precomputed model outputs.

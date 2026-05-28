@@ -331,7 +331,7 @@ def train(
     lr: float = 1e-3,
     device: Optional[torch.device] = None,
     pos_weight: Optional[torch.Tensor] = None,
-    quantiles: list[float] = [0.05, 0.5, 0.95],
+    quantiles: list[float] = [0.025, 0.05, 0.5, 0.95, 0.975],
     output_path: Optional[Path] = None,
     continuous_stats: Optional[dict] = None,
 ) -> MultitaskMLP:
