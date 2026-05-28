@@ -186,6 +186,8 @@ def split_dataset(
         raise ValueError(
             "split_dataset requires a dataset with a `records` attribute containing SMILES fields."
         )
+    #print length of records
+    print(f"Dataset has {len(records)} records to split.")
 
     grouped_records: dict[str, list[int]] = defaultdict(list)
     for index, record in tqdm(enumerate(records), desc="Grouping records by SMILES"):

@@ -46,6 +46,7 @@ def main():
             hidden_dims=config.model.hidden_dims,
             num_binary=dataset.maccs_length,
             categorical_sizes=dataset.categorical_sizes(),
+            num_regression=dataset.n_continuous,
             num_quantiles=config.model.num_quantiles,
             regression_hidden_dim=config.model.regression_hidden_dim,
             dropout=config.model.dropout,
@@ -60,6 +61,17 @@ def main():
             dropout=config.model.dropout,
         )
 
+    # Validate model-dataset compatibility
+    if isinstance(dataset, RawFeatureDataset):
+        if not hasattr(model, 'num_regression') or model.num_regression != dataset.n_continuous:
+            raise ValueError(
+                f"Model-dataset mismatch: model has {getattr(model, 'num_regression', 0)} "
+                f"regression heads but dataset has {dataset.n_continuous} continuous features. "
+                f"This will cause conformal threshold computation to fail. "
+                f"Ensure model is initialized with num_regression=dataset.n_continuous."
+            )
+        logger.info(f"✓ Model has {model.num_regression} regression heads matching {dataset.n_continuous} continuous features")
+
     fractions = {
         "train": TRAIN_FRACTION,
         "val": VAL_FRACTION,
@@ -68,7 +80,7 @@ def main():
     }
     split_dir = splits_dir(data_path, schema_path, fractions, SEED)
 
-    if splits_exist(split_dir):
+    if splits_exist(split_dir) and False:  # disable loading existing splits for now to ensure fresh random splits each run
         logger.info(f"Loading existing splits from {split_dir}...")
         validate_splits_meta(split_dir, data_path, schema_path, fractions, SEED)
         train_ds, val_ds, calibration_ds, test_ds = load_splits(split_dir)
