@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from config import config
 from data.datasets import RawFeatureDataset
-from infer import load_model
+from model.loader import load_model
 from model.conformal import sets_from_outputs
 
 

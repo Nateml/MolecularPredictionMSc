@@ -33,7 +33,8 @@ from model.conformal import sets_from_outputs
 from predicates.definitions import MACCS_DEFINITIONS, FEATURE_VECTOR_DEFINITIONS, FEATURE_VECTOR_DEFINITIONS_CONTINUOUS
 from predicates.interface import PredictionInterface, PredictionEntry
 from predicates.compiler import compile_asp_constraint
-from asp_bridge import solve
+from asp.bridge import solve
+from model.loader import load_model, load_thresholds
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -96,59 +97,6 @@ def parse_spectrum(text: str) -> str:
     if not pairs:
         raise ValueError("No valid peaks found in spectrum input.")
     return " ".join(pairs)
-
-
-# ---------------------------------------------------------------------------
-# Model loading
-# ---------------------------------------------------------------------------
-
-def load_model(checkpoint_path: Path):
-    """Return (model, dataset, device).
-
-    The dataset is constructed purely for its schema attributes (maccs_length,
-    feature orders, edges) — no records are loaded from disk.
-    Applies saved continuous normalization stats to the dataset when present.
-    """
-    data_path = config.data.resolved_dataset_path()
-    schema_path = config.data.resolved_schema_path()
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    dataset = dataset_from_schema(data_path, schema_path,
-                                  spectrum_len=config.model.spectrum_length)
-
-    ckpt = torch.load(checkpoint_path, map_location=device, weights_only=True)
-
-    # Build model from checkpoint metadata so architecture matches exactly
-    # regardless of current config.yaml values.
-    if isinstance(dataset, RawFeatureDataset):
-        model = MultitaskMLPWithQRegression(
-            spectrum_len=config.model.spectrum_length,
-            hidden_dims=config.model.hidden_dims,
-            num_binary=ckpt.get("maccs_length", dataset.maccs_length),
-            categorical_sizes=ckpt.get("categorical_sizes", dataset.categorical_sizes()),
-            num_quantiles=ckpt.get("num_quantiles", config.model.num_quantiles),
-            num_regression=ckpt.get("num_regression", len(dataset.continuous_feature_order)),
-            regression_hidden_dim=config.model.regression_hidden_dim,
-            dropout=config.model.dropout,
-        )
-        # Restore normalization so quantile outputs can be inverted
-        cont_mean = ckpt.get("continuous_mean")
-        cont_std = ckpt.get("continuous_std")
-        if cont_mean is not None and cont_std is not None:
-            dataset.normalise_continuous(cont_mean, cont_std)
-    else:
-        model = MultitaskMLP(
-            spectrum_len=config.model.spectrum_length,
-            hidden_dims=config.model.hidden_dims,
-            num_binary=ckpt.get("maccs_length", dataset.maccs_length),
-            categorical_sizes=ckpt.get("categorical_sizes", dataset.categorical_sizes()),
-            dropout=config.model.dropout,
-        )
-
-    model.load_state_dict(ckpt["model_state_dict"])
-    model.to(device)
-    model.eval()
-    return model, dataset, device
 
 
 # ---------------------------------------------------------------------------
@@ -346,12 +294,6 @@ def _continuous_constraints_from_intervals(
     return _continuous_range_constraints(lo_vals, hi_vals)
 
 
-def load_thresholds(checkpoint_path: Path) -> dict | None:
-    """Load conformal thresholds saved alongside a checkpoint, or None if absent."""
-    path = checkpoint_path.parent / "conformal_thresholds.pt"
-    if path.exists():
-        return torch.load(path, map_location="cpu", weights_only=True)
-    return None
 
 
 def _conformal_structural_entries(sets: dict, dataset) -> dict:

@@ -33,7 +33,7 @@ from data.datasets import dataset_from_schema, RawFeatureDataset
 from predicates.definitions import MACCS_DEFINITIONS, FEATURE_VECTOR_DEFINITIONS
 from predicates.interface import PredictionInterface, PredictionEntry
 from predicates.compiler import compile_asp_constraint
-from asp_bridge import solve, is_asp_supported, degrees_of_unsaturation
+from asp.bridge import solve, is_asp_supported, degrees_of_unsaturation
 
 _MOL_SIZE_MAX_DOU        = {"small": 1,  "med": 2,    "large": 4}
 _MOL_SIZE_MAX_HEAVY_ATOMS = {"small": 12, "med": 20, "large": None}
