@@ -61,6 +61,26 @@ class QuantileHead(nn.Module):
 
         return quantiles
         
+class MultiQuantileLoss(nn.Module):
+    def __init__(self, quantiles: list[float], device: torch.device = torch.device('cpu')):
+        super().__init__()
+        self.register_buffer('quantiles', torch.tensor(quantiles).view(1, -1).to(device))
+        # shape: (1, num_quantiles)
+
+    def forward(self, preds: torch.Tensor, target: torch.Tensor):
+        # preds: (batch, num_quantiles)
+        # target: (batch,)
+        target = target.unsqueeze(1)  # shape: (batch, 1)
+
+        error = target - preds  # shape: (batch, num_quantiles)
+
+        loss = torch.maximum(
+                self.quantiles * error,
+                (self.quantiles - 1) * error
+        )
+
+        return loss.mean()  # shape: scalar
+
 
 class MultitaskMLPWithQRegression(nn.Module):
     def __init__(
