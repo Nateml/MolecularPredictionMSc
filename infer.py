@@ -424,6 +424,10 @@ def parse_args() -> argparse.Namespace:
         "--solve-timeout", type=int, default=config.solver.timeout,
         help=f"Wall-clock time limit in seconds for each ASP solve call (0 = no limit, default: {config.solver.timeout})",
     )
+    p.add_argument(
+        "--asp-debug", action="store_true",
+        help="passed debug=True to asp.bridge.solve()"
+    )
     return p.parse_args()
 
 
@@ -474,7 +478,9 @@ def main() -> None:
 
     if thresholds is not None:
         print("Using conformal prediction sets to derive constraints...")
-        conf_sets = sets_from_outputs(outputs, thresholds)
+        q_low_idx = 0
+        q_high_idx = model.num_quantiles - 1
+        conf_sets = sets_from_outputs(outputs, thresholds, q_low_idx, q_high_idx)
         structural = _conformal_structural_entries(conf_sets, dataset)
         if is_raw and conf_sets["quantile"] is not None:
             count_ranges = _conformal_atom_count_ranges(
@@ -583,7 +589,7 @@ def main() -> None:
                   f"O{atom_counts.get('num_oxygens',0)}")
             for c in asp_constraints:
                 print(f"    {c}")
-        cands, _ = solve(asp_constraints, atom_counts, output_list_of_smiles=True, timeout=args.solve_timeout)
+        cands, _ = solve(asp_constraints, atom_counts, output_list_of_smiles=True, timeout=args.solve_timeout, debug=args.asp_debug)
         for smi in cands:
             if smi not in seen:
                 seen.add(smi)

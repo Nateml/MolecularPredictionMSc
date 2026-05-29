@@ -2936,7 +2936,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
         "definition": """
             % MACCS key 1: ISOTOPE - smiles.lp does not model isotope labels; always 0.
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     49: {
@@ -2944,7 +2945,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
         "definition": """
             % MACCS key 49: CHARGE - smiles.lp only models neutral molecules; always 0.
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     166: {
@@ -2952,7 +2954,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
         "definition": """
             % MACCS key 166: FRAGMENTS > 1 - smiles.lp models single connected molecules; always 0.
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     ##############################

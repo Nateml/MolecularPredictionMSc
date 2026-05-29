@@ -254,6 +254,9 @@ def predict_sets(
     """
     device = next(model.parameters()).device
     model.eval()
+    num_quantiles = model.num_quantiles
+    quantile_low_idx = 0
+    quantile_high_idx = num_quantiles - 1
     with torch.no_grad():
         outputs = model(spectra.to(device))
     return sets_from_outputs(outputs, thresholds, quantile_low_idx, quantile_high_idx)
