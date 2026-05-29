@@ -2581,7 +2581,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
             has_element_104 :-
                 smiles_symbol(_, "Rf").
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     3: {
@@ -2606,7 +2607,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
             has_group_iva_va_via_rows4to6 :-
                 smiles_symbol(_, "Po").
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     4: {
@@ -2628,7 +2630,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
             has_actinide :- smiles_symbol(_, "No").
             has_actinide :- smiles_symbol(_, "Lr").
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     5: {
@@ -2640,7 +2643,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
             has_group_iiib_ivb :- smiles_symbol(_, "Zr").
             has_group_iiib_ivb :- smiles_symbol(_, "Hf").
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     6: {
@@ -2662,7 +2666,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
             has_lanthanide :- smiles_symbol(_, "Yb").
             has_lanthanide :- smiles_symbol(_, "Lu").
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     7: {
@@ -2678,7 +2683,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
             has_group_vb_vib_viib :- smiles_symbol(_, "W").
             has_group_vb_vib_viib :- smiles_symbol(_, "Re").
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     9: {
@@ -2694,7 +2700,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
             has_group_viii :- smiles_symbol(_, "Ir").
             has_group_viii :- smiles_symbol(_, "Pt").
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     12: {
@@ -2707,7 +2714,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
             has_group_ib_iib :- smiles_symbol(_, "Au").
             has_group_ib_iib :- smiles_symbol(_, "Hg").
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     18: {
@@ -2719,7 +2727,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
             has_group_iiia :- smiles_symbol(_, "In").
             has_group_iiia :- smiles_symbol(_, "Tl").
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     20: {
@@ -2727,7 +2736,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
         "definition": """
             has_silicon :- smiles_symbol(_, "Si").
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     27: {
@@ -2735,7 +2745,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
         "definition": """
             has_iodine :- smiles_symbol(_, "I").
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     31: {
@@ -2758,7 +2769,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
                 heteroatom(I),
                 smiles_symbol(J, "I").
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     35: {
@@ -2771,7 +2783,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
             has_alkali_metal :- smiles_symbol(_, "Cs").
             has_alkali_metal :- smiles_symbol(_, "Fr").
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     42: {
@@ -2779,7 +2792,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
         "definition": """
             has_fluorine :- smiles_symbol(_, "F").
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     44: {
@@ -2799,7 +2813,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
                 E != "Br",
                 E != "I".
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     46: {
@@ -2807,7 +2822,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
         "definition": """
             has_bromine :- smiles_symbol(_, "Br").
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     134: {
@@ -2818,7 +2834,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
             has_halogen :- smiles_symbol(_, "Br").
             has_halogen :- smiles_symbol(_, "I").
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     90: {
@@ -2865,7 +2882,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
             has_chlorine :-
                 smiles_symbol(_, "Cl").
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     107: {
@@ -2888,7 +2906,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
                 I != J, J != K, J != L,
                 I != K, I != L, K != L.
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     118: {
@@ -2971,7 +2990,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
             has_alkaline_earth :- smiles_symbol(_, "Ba").
             has_alkaline_earth :- smiles_symbol(_, "Ra").
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     ##############################
@@ -3188,7 +3208,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
                 approx_nonring_bond(I, J),
                 atom_in_ring(J).
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     64: {

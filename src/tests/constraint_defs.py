@@ -27,6 +27,7 @@ constraints = [
         rdkit_check=make_maccs_check(k),
     )
     for k, definition in MACCS_DEFINITIONS.items()
+    if not definition.get("unsupported")
 ]
 
 
