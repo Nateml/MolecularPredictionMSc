@@ -55,10 +55,12 @@ def degrees_of_unsaturation(atom_counts: dict) -> float:
 
 
 def _dou_numerator(atom_counts: dict) -> int:
+    # P counts like N (trivalent) in the degree-of-unsaturation formula
     return (
         2 * atom_counts.get("num_carbons", 0)
         + 2
         + atom_counts.get("num_nitrogens", 0)
+        + atom_counts.get("num_phosphorus", 0)
         - atom_counts.get("num_hydrogens", 0)
     )
 
