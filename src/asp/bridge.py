@@ -13,7 +13,8 @@ from predicates.compiler import compile_asp_constraint
 # Benchmarked sweet spot on 16-CPU machine; cap at cpu_count for portability.
 _CLINGO_THREADS = min(6, os.cpu_count() or 1)
 
-_ASP_DIR = Path(__file__).resolve().parent / "src" / "asp"
+#_ASP_DIR = Path(__file__).resolve().parent / "src" / "asp"
+_ASP_DIR = Path(__file__).resolve().parent
 
 # Elements parametrized in smiles.lp (C/H/N/O/P/S only).
 _ASP_ELEMENTS = {"C", "H", "N", "O", "P", "S"}

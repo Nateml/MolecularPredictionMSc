@@ -22,7 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from asp_bridge import solve
+from asp.bridge import solve
 from predicates.compiler import compile_asp_constraint
 from predicates.interface import PredictionEntry, PredictionInterface
 

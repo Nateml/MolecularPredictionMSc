@@ -5,7 +5,7 @@ from rdkit import Chem
 
 from predicates.interface import PredictionEntry, PredictionInterface
 from predicates.compiler import compile_asp_constraint
-from asp_bridge import solve
+from asp.bridge import solve
 
 class PipelineTimeoutError(Exception):
     def __init__(self, predictions: dict, timeout: float | None):

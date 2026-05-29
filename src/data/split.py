@@ -15,7 +15,7 @@ from loguru import logger
 from torch.utils.data import random_split
 
 from torch.utils.data import Subset
-from src.data.datasets import SpectrumDataset
+from data.datasets import SpectrumDataset
 
 TRAIN_FRACTION: Final[float] = 0.75
 VAL_FRACTION: Final[float] = 0.10

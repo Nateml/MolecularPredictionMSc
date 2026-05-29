@@ -36,7 +36,7 @@ from data.split import (
     TEST_FRACTION,
     SEED,
 )
-from infer import load_model
+from model.loader import load_model
 from model.conformal import calibrate_model
 
 

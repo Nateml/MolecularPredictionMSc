@@ -43,6 +43,7 @@ from config import config
 from data.datasets import RawFeatureDataset
 from data.split import splits_dir as get_splits_dir
 from infer import load_model
+from model.loader import load_model
 from model.conformal import sets_from_outputs
 import pickle
 

@@ -36,6 +36,11 @@ def compile_asp_constraint(interface: PredictionInterface, HELPERS = HELPER_PRED
         if not definition:
             raise ValueError(f"No predicate definition found for key {k}. Ensure that the key is defined in definitions.py.")
 
+        # Skip predicates unsupported by smiles.lp (e.g. isotopes, charges, fragments).
+        # Emitting constraints for these causes UNSAT when the model predicts value=1.
+        if definition.get("unsupported"):
+            continue
+
         # Add predicate definition
         rules.add(definition['definition'])
 
