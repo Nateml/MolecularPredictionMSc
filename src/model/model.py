@@ -182,21 +182,20 @@ class MultitaskCNN(nn.Module):
 
     Internals:
         - Unsqueeze channel dim to (batch, 1, spectrum_len)
-        - Several Conv1d blocks + downsampling
-        - Global pooling to fixed-size vector
+        - Conv1D layers: 64(k=5) → 128(k=5) → 128(k=3) → MaxPool → 256(k=3) → 256(k=3)
+        - Global max pooling to fixed-size vector
+        - Dense projection layers
         - Same heads as existing MLP models
     """
     def __init__(
         self,
         spectrum_len: int = 1000,
-        conv_channels: list[int] = [32, 64, 128],
-        kernel_sizes: list[int] | None = None,
         num_binary: int = 166,
         categorical_sizes: dict[str, int] | None = None,
         num_regression: int = 0,
         num_quantiles: int = 3,
         regression_hidden_dim: int = 64,
-        dropout: float = 0.2,
+        dropout: float = 0.3,
         global_feat_dim: int = 128,
     ):
         super().__init__()
@@ -204,35 +203,35 @@ class MultitaskCNN(nn.Module):
         if categorical_sizes is None:
             raise ValueError("categorical_sizes is required. Use categorical_sizes_from_df() to derive it from your feature DataFrame.")
 
-        if kernel_sizes is None:
-            kernel_sizes = [3] * len(conv_channels)
-
         self.categorical_names = list(categorical_sizes.keys())
         self.num_binary = num_binary
         self.num_regression = num_regression
         self.num_quantiles = num_quantiles
         self.categorical_sizes = categorical_sizes
 
-        # Build convolutional backbone
-        layers = []
-        prev_ch = 1
-        for out_ch, k in zip(conv_channels, kernel_sizes):
-            layers.append(_conv1d_block(prev_ch, out_ch, kernel_size=k, dropout=dropout))
-            # add a maxpool to half the sequence length
-            layers.append(nn.MaxPool1d(kernel_size=2, stride=2))
-            prev_ch = out_ch
+        # Build convolutional backbone with specific architecture:
+        # Conv1D 64 (k=5) → Conv1D 128 (k=5) → Conv1D 128 (k=3) → MaxPool2 →
+        # Conv1D 256 (k=3) → Conv1D 256 (k=3) → GlobalMaxPool
+        self.conv_backbone = nn.Sequential(
+            _conv1d_block(1, 64, kernel_size=5, dropout=dropout),
+            _conv1d_block(64, 128, kernel_size=5, dropout=dropout),
+            _conv1d_block(128, 128, kernel_size=3, dropout=dropout),
+            nn.MaxPool1d(kernel_size=2, stride=2),
+            _conv1d_block(128, 256, kernel_size=3, dropout=dropout),
+            _conv1d_block(256, 256, kernel_size=3, dropout=dropout),
+        )
 
-        self.conv_backbone = nn.Sequential(*layers)
+        # Global max pooling to fixed-size vector
+        self.global_pool = nn.AdaptiveMaxPool1d(1)  # -> (batch, 256, 1)
 
-        # After convs, pool to fixed global feature vector
-        self.global_pool = nn.AdaptiveAvgPool1d(1)  # -> (batch, channels, 1)
-
-        # Final projection from last conv channels to desired feature dim
+        # Final projection: 256 → 256 (ReLU) → Dropout → 128
         self.proj = nn.Sequential(
-            nn.Flatten(),  # from (batch, ch, 1) to (batch, ch)
-            nn.Linear(prev_ch, global_feat_dim),
+            nn.Flatten(),  # from (batch, 256, 1) to (batch, 256)
+            nn.Linear(256, 256),
             nn.ReLU(),
             nn.Dropout(dropout),
+            nn.Linear(256, global_feat_dim),
+            nn.ReLU(),
         )
 
         # Heads (same as MLP)
@@ -254,7 +253,7 @@ class MultitaskCNN(nn.Module):
         if x.dim() == 2:
             x = x.unsqueeze(1)
         h = self.conv_backbone(x)
-        h = self.global_pool(h)  # (batch, ch, 1)
+        h = self.global_pool(h)  # (batch, 256, 1)
         feat = self.proj(h)      # (batch, global_feat_dim)
 
         out = {

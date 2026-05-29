@@ -10,11 +10,18 @@ With --conformal, loads conformal_thresholds.pt from the checkpoint directory
 and reports coverage rate, average set size, and singleton rate instead.
 
 Usage:
+    # Load from JSON file
     python evaluate.py --test-set data/test.json
     python evaluate.py --test-set data/test.json --checkpoint models/final/multitask_mlp_mixed_best.pt
     python evaluate.py --test-set data/test.json --threshold 0.5 --output results.csv
     python evaluate.py --test-set data/test.json --conformal
     python evaluate.py --test-set data/test.json --conformal --thresholds-path path/to/conformal_thresholds.pt
+    
+    # Load from saved splits
+    python evaluate.py --from-splits --split-name test
+    python evaluate.py --from-splits --split-name val --checkpoint models/final/multitask_mlp.best.pt
+    python evaluate.py --from-splits --split-name train --conformal --output train_conformal_results.csv
+    python evaluate.py --from-splits --split-name test --split-hash a3f2c1b9d4e5  # Specific split
 """
 from __future__ import annotations
 
@@ -30,11 +37,96 @@ from torch.utils.data import DataLoader
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))  # Add this line
 
 from config import config
 from data.datasets import RawFeatureDataset
+from data.split import splits_dir as get_splits_dir
 from infer import load_model
 from model.conformal import sets_from_outputs
+import pickle
+
+
+def load_dataset_from_splits(
+    split_name: str = "test",
+    data_path: Path | None = None,
+    schema_path: Path | None = None,
+    split_hash: str | None = None,
+) -> tuple[RawFeatureDataset, dict]:
+    """
+    Load a dataset from saved splits.
+    
+    Args:
+        split_name: "train", "val", "calibration", or "test"
+        data_path: Path to data JSON. If None, uses config.data.resolved_dataset_path()
+        schema_path: Path to schema. If None, uses config.data.resolved_schema_path()
+        split_hash: Hash of split directory. If None, constructs from paths.
+    
+    Returns:
+        (dataset_subset, split_info_dict)
+    """
+    if data_path is None:
+        data_path = config.data.resolved_dataset_path()
+    if schema_path is None:
+        schema_path = config.data.resolved_schema_path()
+    
+    data_path = Path(data_path)
+    schema_path = Path(schema_path)
+    
+    if not data_path.exists():
+        raise FileNotFoundError(f"Data path not found: {data_path}")
+    if not schema_path.exists():
+        raise FileNotFoundError(f"Schema path not found: {schema_path}")
+    
+    # Construct splits directory
+    fractions = {
+        "train": 0.75,
+        "val": 0.10,
+        "calibration": 0.05,
+        "test": 0.10,
+    }
+    split_hash_actual = split_hash or get_splits_dir(data_path, schema_path, fractions, seed=42)
+    
+    if isinstance(split_hash_actual, Path):
+        split_dir = split_hash_actual
+    else:
+        split_dir = Path(__file__).resolve().parents[0] / "data" / "splits" / split_hash_actual
+    
+    if not split_dir.exists():
+        raise FileNotFoundError(
+            f"Split directory not found: {split_dir}\n"
+            f"Available splits can be found in {split_dir.parent}/"
+        )
+    
+    # Load dataset object
+    dataset_pkl = split_dir / "dataset.pkl"
+    if not dataset_pkl.exists():
+        raise FileNotFoundError(f"Dataset pickle not found: {dataset_pkl}")
+    
+    with open(dataset_pkl, "rb") as f:
+        dataset = pickle.load(f)
+    
+    # Load split indices
+    split_pkl = split_dir / f"{split_name}.pkl"
+    if not split_pkl.exists():
+        raise FileNotFoundError(f"Split pickle not found: {split_pkl}")
+    
+    with open(split_pkl, "rb") as f:
+        indices = pickle.load(f)
+    
+    # Create subset using indices
+    from torch.utils.data import Subset
+    subset = Subset(dataset, indices)
+    
+    # Load metadata
+    meta_path = split_dir / "meta.json"
+    split_info = {}
+    if meta_path.exists():
+        import json
+        with open(meta_path, "r") as f:
+            split_info = json.load(f)
+    
+    return subset, split_info
 
 
 def parse_args() -> argparse.Namespace:
@@ -43,7 +135,24 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    p.add_argument("--test-set", required=True, help="Path to test JSON dataset.")
+    p.add_argument(
+        "--test-set", default=None,
+        help="Path to test JSON dataset. Mutually exclusive with --from-splits.",
+    )
+    p.add_argument(
+        "--from-splits", action="store_true",
+        help="Load dataset from saved splits instead of JSON file.",
+    )
+    p.add_argument(
+        "--split-name", default="test",
+        help="Which split to load: 'train', 'val', 'calibration', or 'test' (default: test). "
+             "Only used with --from-splits.",
+    )
+    p.add_argument(
+        "--split-hash", default=None,
+        help="Hash of the split directory. If None, constructs from config paths. "
+             "Only used with --from-splits.",
+    )
     p.add_argument(
         "--checkpoint", default=None,
         help="Path to .pt checkpoint. Defaults to models/multitask_mlp.best.pt",
@@ -208,9 +317,12 @@ def _print_conformal_results(results: list[dict]) -> None:
 def main() -> None:
     args = parse_args()
 
-    test_path = Path(args.test_set)
-    if not test_path.exists():
-        print(f"Test set not found: {test_path}", file=sys.stderr)
+    # Validate arguments
+    if args.from_splits and args.test_set:
+        print("ERROR: Cannot specify both --test-set and --from-splits", file=sys.stderr)
+        sys.exit(1)
+    if not args.from_splits and not args.test_set:
+        print("ERROR: Must specify either --test-set or --from-splits", file=sys.stderr)
         sys.exit(1)
 
     checkpoint_path = Path(args.checkpoint) if args.checkpoint else (
@@ -225,14 +337,50 @@ def main() -> None:
     print(f"Loading model from {checkpoint_path}...")
     model, ref_dataset, device = load_model(checkpoint_path)
 
-    schema_path = config.data.resolved_schema_path()
-    test_ds = RawFeatureDataset(test_path, schema_path)
+    # Load test dataset
+    if args.from_splits:
+        print(f"Loading {args.split_name} split from saved splits...")
+        try:
+            test_ds, split_info = load_dataset_from_splits(
+                split_name=args.split_name,
+                split_hash=args.split_hash,
+            )
+            print(f"Loaded {args.split_name} split from {split_info.get('split_dir', 'saved splits')}")
+            print(f"Split info: {split_info}")
+        except FileNotFoundError as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        test_path = Path(args.test_set)
+        if not test_path.exists():
+            print(f"Test set not found: {test_path}", file=sys.stderr)
+            sys.exit(1)
+
+        schema_path = config.data.resolved_schema_path()
+        print(f"Loading test set from JSON: {test_path}")
+        
+        test_ds = RawFeatureDataset(test_path, schema_path)
+        idx_path = test_path.with_name(test_path.name + ".idx")
+        print(f"Index file path: {idx_path}")
+        print(f"Index file exists: {idx_path.exists()}")
+        if idx_path.exists():
+            print(f"Index file size: {idx_path.stat().st_size} bytes")
+    
+    # Apply normalization if available from ref_dataset
+    # Handle both Subset and direct dataset objects
+    underlying_ds = test_ds.dataset if hasattr(test_ds, 'dataset') else test_ds
+    
     if ref_dataset._cont_mean is not None:
-        test_ds.normalise_continuous(
+        underlying_ds.normalise_continuous(
             ref_dataset._cont_mean.tolist(),
             ref_dataset._cont_std.tolist(),
         )
-
+ 
+    num_samples = len(test_ds)
+    print(f"Loaded dataset with {num_samples} samples.")
+    if num_samples == 0:
+        print("ERROR: Test dataset is empty! Check that the test set file is not empty and in valid JSON format.")
+        sys.exit(1)
     thresholds = None
     if args.conformal:
         thresh_path = (
@@ -253,7 +401,7 @@ def main() -> None:
     loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False)
     print(f"Evaluating on {len(test_ds)} samples...")
 
-    num_cat = len(test_ds.onehot_feature_order)
+    num_cat = len(underlying_ds.onehot_feature_order)
 
     # Accumulators — point mode
     all_binary_preds: list[np.ndarray] = []
@@ -268,8 +416,6 @@ def main() -> None:
     model.eval()
     with torch.no_grad():
         for batch_idx, (x, targets) in enumerate(tqdm(loader, desc="Running inference on test set")):
-            if batch_idx >= 2:
-                break
             x = x.to(device)
             outputs = model(x)
 
@@ -304,7 +450,7 @@ def main() -> None:
         for i, metrics in enumerate(binary_rows):
             results.append({"target": f"maccs_{i}", "type": "binary", **metrics})
 
-        for i, feat in enumerate(test_ds.onehot_feature_order):
+        for i, feat in enumerate(underlying_ds.onehot_feature_order):
             set_mask = np.concatenate(all_cat_sets[i], axis=0)
             tgts = np.array(all_cat_targets[i])
             metrics = _categorical_conformal_metrics(set_mask, tgts)
@@ -318,7 +464,7 @@ def main() -> None:
         for i, metrics in enumerate(binary_rows):
             results.append({"target": f"maccs_{i}", "type": "binary", **metrics})
 
-        for i, feat in enumerate(test_ds.onehot_feature_order):
+        for i, feat in enumerate(underlying_ds.onehot_feature_order):
             metrics = _categorical_metrics(
                 np.array(all_cat_preds[i]), np.array(all_cat_targets[i])
             )
