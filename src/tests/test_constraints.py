@@ -47,6 +47,11 @@ def test_formula_coverage_verbose(
 def test_constraint_soundness(
     constraint, formulas, cached_run_pipeline, smiles_to_mol, build_predictions
 ):
+    """
+    Tests for constraint soundness. In this context, soundness means that every
+    candidate molecule in the solution set passes the constraint check (i.e.
+    no molecules violate it).
+    """
     for formula in formulas:
         predictions = build_predictions(formula, constraint)
 
@@ -73,6 +78,12 @@ def test_constraint_soundness(
 def test_constraint_completeness(
     constraint, formulas, cached_run_pipeline, smiles_to_mol, build_predictions
 ):
+    """
+    Tests for completeness of the constraints. Completeness in this context means
+    that the solution is not overconstrained, i.e. every molecule that should appear
+    in the solution set does. It does not check if there are extra molecules which
+    shouldn't appear -- thats a soundness thing.
+    """
     for formula in formulas:
         # Base
         base_pred = build_predictions(formula, constraint=None)
@@ -106,8 +117,11 @@ def test_constraint_completeness(
         expected = sorted(expected)
         constrained_smiles = sorted(constrained_smiles)
 
-        assert constrained_smiles == expected, (
+        # assert that expected is a subset of constrained_smiles
+        missing = sorted(set(expected) - set(constrained_smiles))
+        assert not missing, (
             f"{constraint.name} does not correctly filter for {formula}.\n"
+            f"Missing from constrained (expected but absent): {missing}\n"
             f"Expected: {expected}\n"
             f"Got: {constrained_smiles}"
         )
