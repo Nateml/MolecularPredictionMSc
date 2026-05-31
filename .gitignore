@@ -233,3 +233,4 @@ asp-bridge-diagnosis-*.md
 
 # Eval results
 eval_results.csv
+eval_results/
