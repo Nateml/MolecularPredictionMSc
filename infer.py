@@ -533,7 +533,9 @@ def main() -> None:
         print(f"Predicted formula (median): C{single_counts.get('num_carbons', 0)}"
               f"H{single_counts.get('num_hydrogens', 0)}"
               f"N{single_counts.get('num_nitrogens', 0)}"
-              f"O{single_counts.get('num_oxygens', 0)}")
+              f"O{single_counts.get('num_oxygens', 0)}"
+              f"S{single_counts.get('num_sulfurs', 0)}"
+              f"P{single_counts.get('num_phosphorous', 0)}")
         combo_iter = iter([single_counts])
         n_combos = 1
     elif is_raw and count_ranges is not None:
@@ -589,7 +591,7 @@ def main() -> None:
                   f"O{atom_counts.get('num_oxygens',0)}")
             for c in asp_constraints:
                 print(f"    {c}")
-        cands, _ = solve(asp_constraints, atom_counts, output_list_of_smiles=True, timeout=args.solve_timeout, debug=args.asp_debug)
+        cands, _, _ = solve(asp_constraints, atom_counts, output_list_of_smiles=True, timeout=args.solve_timeout, debug=args.asp_debug)
         for smi in cands:
             if smi not in seen:
                 seen.add(smi)

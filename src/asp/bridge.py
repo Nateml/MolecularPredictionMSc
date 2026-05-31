@@ -55,9 +55,11 @@ def degrees_of_unsaturation(atom_counts: dict) -> float:
 
 
 def _dou_numerator(atom_counts: dict) -> int:
-    # P counts like N (trivalent) in the degree-of-unsaturation formula
+    # P counts like N (trivalent); S can be valence-4 (like C) or higher,
+    # so we treat all S as valence-4 to get the maximum possible DoU —
+    # this avoids skipping solves where S4/S6 enables a double bond or ring.
     return (
-        2 * atom_counts.get("num_carbons", 0)
+        2 * (atom_counts.get("num_carbons", 0) + atom_counts.get("num_sulfurs", 0))
         + 2
         + atom_counts.get("num_nitrogens", 0)
         + atom_counts.get("num_phosphorus", 0)
@@ -203,11 +205,11 @@ def _model_to_smiles(model_str: str) -> str:
     return to_smiles(1)
 
 
-def solve(asp_code: list[str], atom_counts: dict, output_list_of_smiles: bool = False, debug=False, timeout: int = 0, canonicalize: bool = False) -> tuple[list | str, int]:
-    """Run ASP solver and return (SMILES list or formatted string, candidate count)."""
+def solve(asp_code: list[str], atom_counts: dict, output_list_of_smiles: bool = False, debug=False, timeout: int = 0, canonicalize: bool = False) -> tuple[list | str, int, bool]:
+    """Run ASP solver and return (SMILES list or formatted string, candidate count, timed_out)."""
     dou_num = _dou_numerator(atom_counts)
     if dou_num < 0 or dou_num % 2 != 0 or dou_num / 2 < _min_required_dou(asp_code):
-        return ([] if output_list_of_smiles else "", 0)
+        return ([] if output_list_of_smiles else "", 0, False)
 
     flags = [
         '0',
@@ -239,7 +241,8 @@ def solve(asp_code: list[str], atom_counts: dict, output_list_of_smiles: bool = 
 
     with ctl.solve(async_=True, on_model=on_model) as handle:
         finished = handle.wait(timeout if timeout > 0 else None)
-        if not finished:
+        timed_out = not finished
+        if timed_out:
             print(f"Warning: ASP solve timed out after {timeout}s; results may be incomplete.", file=sys.stderr)
             handle.cancel()
 
@@ -253,14 +256,14 @@ def solve(asp_code: list[str], atom_counts: dict, output_list_of_smiles: bool = 
             for smi in visualisations:
                 mol = Chem.MolFromSmiles(smi)
                 canonical.append(Chem.MolToSmiles(mol) if mol else smi)
-            return canonical, model_count
-        return visualisations, model_count
+            return canonical, model_count, timed_out
+        return visualisations, model_count, timed_out
 
     final_output = "".join(
         f"CANDIDATE {i}:\n{vis}\n{asp}\n\n"
         for i, (vis, asp) in enumerate(zip(visualisations, models_raw))
     )
-    return final_output, model_count
+    return final_output, model_count, timed_out
 
 def main():
     # Run the ASP program and print the results
@@ -320,7 +323,7 @@ def main():
         print(f"ASP constraints:\n{chr(10).join(asp_constraints)}\n")
         print(f"Atom counts: {atom_counts}\n")
 
-    output, num_candidates = solve(asp_constraints, atom_counts, output_list_of_smiles=args.return_list, debug=True, canonicalize=args.canonicalize)
+    output, num_candidates, _ = solve(asp_constraints, atom_counts, output_list_of_smiles=args.return_list, debug=True, canonicalize=args.canonicalize)
 
     print(f"Found {num_candidates} candidates.\n")
     print(output)

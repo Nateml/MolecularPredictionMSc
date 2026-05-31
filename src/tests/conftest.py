@@ -99,7 +99,7 @@ def run_pipeline(canonicalize):
             try:
                 interface = PredictionInterface.model_validate(predictions)
                 asp_constraints, atom_counts = compile_asp_constraint(interface)
-                output, _ = solve(
+                output, _, _ = solve(
                     asp_constraints,
                     atom_counts,
                     output_list_of_smiles=True,
