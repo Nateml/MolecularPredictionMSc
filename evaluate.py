@@ -169,8 +169,8 @@ def parse_args() -> argparse.Namespace:
         help="Sigmoid threshold for binary (MACCS) predictions (default: 0.5)",
     )
     p.add_argument(
-        "--output", default="eval_results.csv",
-        help="CSV output path (default: eval_results.csv)",
+        "--output-folder", default="eval_results/",
+        help="path to save CSVs to (default: eval_results/)",
     )
     p.add_argument(
         "--batch-size", type=int, default=None,
@@ -744,15 +744,18 @@ def main() -> None:
     # ---------------------------------------------------------------------------
     # Save CSVs
     # ---------------------------------------------------------------------------
-    out_path = Path(args.output)
-    with open(out_path, "w", newline="") as f:
+    out_dir = Path(args.output_folder)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    main_out = out_dir / "eval_results.csv"
+    with open(main_out, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(results)
-    print(f"\nResults saved to {out_path}")
+    print(f"\nResults saved to {main_out}")
 
     if cont_rows:
-        cont_out = out_path.with_name(out_path.stem + "_continuous.csv")
+        cont_out = out_dir / "eval_results_continuous.csv"
         cont_fieldnames = list(cont_rows[0].keys())
         with open(cont_out, "w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=cont_fieldnames)
@@ -761,13 +764,13 @@ def main() -> None:
         print(f"Continuous results saved to {cont_out}")
 
     if atom_rows:
-        atom_out = out_path.with_name(out_path.stem + "_atom_counts.csv")
+        atom_out = out_dir / "eval_results_atom_counts.csv"
         atom_fieldnames = list(atom_rows[0].keys())
         with open(atom_out, "w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=atom_fieldnames)
             writer.writeheader()
             writer.writerows(atom_rows)
-            writer.writerow({k: "" for k in atom_fieldnames})  # blank separator
+            writer.writerow({k: "" for k in atom_fieldnames})
             summary: dict = {
                 "element": "JOINT",
                 "median_accuracy": joint_acc,
