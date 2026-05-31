@@ -56,6 +56,18 @@ HELPER_PREDICATES: Dict[str, str] = {
 
         single_bond_between(I, J) :-
             adjacent_single(J, I).
+
+        % Ring closure bonds not encoded as double (parallel pair) are single.
+        % ring_closure_dbl is defined in the ring_atom_with_dbl helper (always loaded).
+        single_bond_between(I, J) :-
+            cycle_start(I, CY),
+            cycle_end(J, CY),
+            not ring_closure_dbl(I, J).
+
+        single_bond_between(J, I) :-
+            cycle_start(I, CY),
+            cycle_end(J, CY),
+            not ring_closure_dbl(I, J).
     """,
 
     "double_bond_between": """
@@ -65,6 +77,12 @@ HELPER_PREDICATES: Dict[str, str] = {
         double_bond_between(I, J) :-
             parent(J, _, I),
             multi_bond(I, 2).
+        % Ring closure double bonds (encoded as two parallel ring labels).
+        % ring_closure_dbl is defined in the ring_atom_with_dbl helper (always loaded).
+        double_bond_between(I, J) :-
+            ring_closure_dbl(I, J).
+        double_bond_between(J, I) :-
+            ring_closure_dbl(I, J).
     """,
 
     "triple_bond_between": """
@@ -174,36 +192,48 @@ HELPER_PREDICATES: Dict[str, str] = {
     # by only counting I in (S, E] (S itself would be outside the ring).
     "ring_double_bond_count": """
         ring_double_bond_count(C, N) :-
+            cycle_start(_, C),
+            N = #count { I : atom_in_ring(I, C), multi_bond(I, 2) }.
+    """,
+
+    # True when ring C has two backbone-adjacent atoms both with multi_bond (cumulene).
+    # Aromatic rings have alternating single/double bonds; cumulenes have consecutive ones.
+    "consecutive_ring_doubles": """
+        consecutive_ring_doubles(C) :-
             cycle_start(S, C),
             cycle_end(E, C),
-            N = #count { I : ring_atom(I), multi_bond(I, 2), S < I, I <= E }.
+            multi_bond(I, _),
+            multi_bond(J, _),
+            parent(I, _, J),
+            S < J, J <= E,
+            S < I, I <= E.
     """,
 
     # A ring cycle is aromatic in Kekulé representation if:
     #   6-membered ring with 3 alternating double bonds (benzene-type), or
     #   5-membered ring with 2 double bonds + one heteroatom (furan/pyrrole/thiophene).
+    # Consecutive double bonds (cumulenes) are excluded — they are never aromatic.
     "aromatic_ring_cycle": """
         aromatic_ring_cycle(C) :-
             cycle_start(S, C),
             cycle_end(E, C),
             E - S = 5,
-            ring_double_bond_count(C, 3).
+            ring_double_bond_count(C, 3),
+            not consecutive_ring_doubles(C).
         aromatic_ring_cycle(C) :-
             cycle_start(S, C),
             cycle_end(E, C),
             E - S = 4,
             ring_double_bond_count(C, 2),
             ring_atom(I), symbol(I, EL), EL != "C", EL != "H",
-            S <= I, I <= E.
+            S <= I, I <= E,
+            not consecutive_ring_doubles(C).
     """,
 
     "aromatic_atom": """
         aromatic_atom(I) :-
-            ring_atom(I),
-            aromatic_ring_cycle(C),
-            cycle_start(S, C),
-            cycle_end(E, C),
-            S <= I, I <= E.
+            atom_in_ring(I, C),
+            aromatic_ring_cycle(C).
     """,
 
     "aromatic_atom_count": """
@@ -457,6 +487,10 @@ HELPER_PREDICATES: Dict[str, str] = {
         % Path-based ring membership: only atoms on the true DFS backbone
         % path from cycle_start to cycle_end are ring members.
         atom_in_ring(I, CY) :- ring_path_atom(CY, I).
+        % The atoms that open/close the ring are always ring members.
+        % ring_path_atom misses them when cycle_start and cycle_end are DFS siblings.
+        atom_in_ring(I, CY) :- cycle_start(I, CY).
+        atom_in_ring(I, CY) :- cycle_end(I, CY).
         % Extended rule 1: when cycle_end is adjacent to cycle_start (E = S+1),
         % the ring path runs backward through the root via atoms 1..S-1.
         atom_in_ring(I, CY) :-
@@ -488,6 +522,19 @@ HELPER_PREDICATES: Dict[str, str] = {
             cycle_start(S, CY),
             parent(I, _, J),
             J < S.
+        % Forward propagation from branching atom toward cycle_end.
+        % For backward-through-root rings the branching atom has one child going
+        % toward the cycle_start (already covered by cycle_start/ring_path_atom)
+        % and another child going toward the cycle_end.  Atoms on the latter path
+        % are missed by ring_path_atom because they are not descendants of S.
+        % We propagate forward (I < J <= E) while excluding S's own subtree.
+        atom_in_ring(J, CY) :-
+            atom_in_ring(I, CY),
+            cycle_end(E, CY),
+            cycle_start(S, CY),
+            parent(I, _, J),
+            I < J, J <= E,
+            not is_descendant(S, J).
         atom_in_ring(I) :-
             atom_in_ring(I, _).
     """,
@@ -1174,17 +1221,27 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
                 symbol(J, "O"),
                 not approx_ring_bond(I, J).
 
-            % Ring C-O single bond only when neither atom is in a ring with double bonds.
+            % Ring C-O single bond only when neither atom is in an aromatic ring.
             % MACCS 157 uses [#6]-[#8] (explicit single) which does not match aromatic C-O bonds.
-            % Checking either atom covers fused-ring aromaticity where the double bond
-            % is in the adjacent ring rather than the ring containing the C-O bond.
             has_c_o_single_bond :-
                 single_bond_between(I, J),
                 symbol(I, "C"),
                 symbol(J, "O"),
                 approx_ring_bond(I, J),
-                not ring_atom_with_dbl(I),
-                not ring_atom_with_dbl(J).
+                not aromatic_atom(I),
+                not aromatic_atom(J).
+
+            % 3- and 4-membered rings are never aromatic, so a ring C-O single bond
+            % in a small ring is always a genuine single bond regardless of whether
+            % the ring also contains a double bond (e.g. oxirene-like C=C-O rings).
+            has_c_o_single_bond :-
+                single_bond_between(I, J),
+                symbol(I, "C"),
+                symbol(J, "O"),
+                atom_in_ring(I, CY),
+                atom_in_ring(J, CY),
+                ring_size(CY, N),
+                N <= 4.
         """,
         "domain": {0, 1}
     },
@@ -1198,30 +1255,58 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
                 symbol(J, "N"),
                 not approx_ring_bond(I, J).
 
-            % Ring C-N single bond only when neither atom is in a ring with double bonds.
+            % Ring C-N single bond only when neither atom is in an aromatic ring.
             % MACCS 158 uses [#6]-[#7] which does not match aromatic C-N bonds.
             has_c_n_single_bond :-
                 single_bond_between(I, J),
                 symbol(I, "C"),
                 symbol(J, "N"),
                 approx_ring_bond(I, J),
-                not ring_atom_with_dbl(I),
-                not ring_atom_with_dbl(J).
+                not aromatic_atom(I),
+                not aromatic_atom(J).
+
+            % 3- and 4-membered rings are never aromatic; ring C-N single bond in
+            % a small ring is always genuine regardless of other double bonds in the ring.
+            has_c_n_single_bond :-
+                single_bond_between(I, J),
+                symbol(I, "C"),
+                symbol(J, "N"),
+                atom_in_ring(I, CY),
+                atom_in_ring(J, CY),
+                ring_size(CY, N),
+                N <= 4.
         """,
         "domain": {0, 1}
     },
     24: {
         "predicate": "has_n_o_single_bond",
         "definition": """
-            % Non-ring N-O single bond only.  Ring N-O bonds are excluded because
-            % ASP cannot distinguish aromatic ring bonds (where MACCS 24 = 0) from
-            % non-aromatic ring bonds in Kekulé representation.
+            % Non-ring-bond N-O single bond (including exocyclic bonds where one
+            % atom is in a ring). Excludes only bonds where BOTH atoms share a ring.
             has_n_o_single_bond :-
                 single_bond_between(I, J),
                 symbol(I, "N"),
                 symbol(J, "O"),
-                not ring_atom(I),
-                not ring_atom(J).
+                not approx_ring_bond(I, J).
+
+            % Ring N-O single bond only when neither atom is in an aromatic ring.
+            has_n_o_single_bond :-
+                single_bond_between(I, J),
+                symbol(I, "N"),
+                symbol(J, "O"),
+                approx_ring_bond(I, J),
+                not aromatic_atom(I),
+                not aromatic_atom(J).
+
+            % 3- and 4-membered rings are never aromatic; ring N-O single bond is genuine.
+            has_n_o_single_bond :-
+                single_bond_between(I, J),
+                symbol(I, "N"),
+                symbol(J, "O"),
+                atom_in_ring(I, CY),
+                atom_in_ring(J, CY),
+                ring_size(CY, SZ),
+                SZ <= 4.
         """,
         "domain": {0, 1}
     },
@@ -1241,28 +1326,27 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
     99: {
         "predicate": "has_c_c_double_bond",
         "definition": """
-            % Non-ring C=C only: ring double bonds are excluded because ASP's Kekulé
-            % representation of aromatic rings uses multi_bond, but RDKit's MACCS 99
-            % does not match aromatic C:C bonds after aromatization.
+            % Non-aromatic C=C: excludes bonds where both atoms are in aromatic rings.
+            % RDKit's MACCS 99 ([#6]=[#6]) does not match aromatic C:C bonds.
             has_c_c_double_bond :-
                 double_bond_between(I, J),
                 symbol(I, "C"),
                 symbol(J, "C"),
-                not ring_atom(I),
-                not ring_atom(J).
+                not aromatic_atom(I),
+                not aromatic_atom(J).
         """,
         "domain": {0, 1}
     },
     78: {
         "predicate": "has_c_n_double_bond",
         "definition": """
-            % Non-ring C=N only: same aromatic Kekulé mismatch as has_c_c_double_bond.
+            % Non-aromatic C=N only: same aromatic Kekulé mismatch as has_c_c_double_bond.
             has_c_n_double_bond :-
                 double_bond_between(I, J),
                 symbol(I, "C"),
                 symbol(J, "N"),
-                not ring_atom(I),
-                not ring_atom(J).
+                not aromatic_atom(I),
+                not aromatic_atom(J).
         """,
         "domain": {0, 1}
     },
@@ -1714,15 +1798,15 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
     45: {
         "predicate": "has_c_eq_c_n",
         "definition": """
-            % Non-ring C=C required; ring C=C excluded (aromatic Kekulé mismatch).
+            % Non-aromatic C=C with adjacent N.
             has_c_eq_c_n :-
                 double_bond_between(I, J),
                 any_bond_between(J, K),
                 symbol(I, "C"),
                 symbol(J, "C"),
                 symbol(K, "N"),
-                not ring_atom(I),
-                not ring_atom(J),
+                not aromatic_atom(I),
+                not aromatic_atom(J),
                 I != J, J != K, I != K.
         """,
         "domain": {0, 1}
@@ -1730,7 +1814,7 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
     50: {
         "predicate": "has_c_eq_c_cc",
         "definition": """
-            % Non-ring C=C required; ring C=C excluded (aromatic Kekulé mismatch).
+            % Non-aromatic C=C with two C neighbors.
             has_c_eq_c_cc :-
                 double_bond_between(I, J),
                 any_bond_between(J, K),
@@ -1739,8 +1823,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
                 symbol(J, "C"),
                 symbol(K, "C"),
                 symbol(L, "C"),
-                not ring_atom(I),
-                not ring_atom(J),
+                not aromatic_atom(I),
+                not aromatic_atom(J),
                 I != J, J != K, J != L, I != K, I != L, K != L.
         """,
         "domain": {0, 1}
@@ -1751,11 +1835,11 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
     119: {
         "predicate": "has_n_eq_a",
         "definition": """
-            % Non-ring N= only; ring N= excluded (aromatic Kekulé mismatch).
+            % Non-aromatic N= only; aromatic ring N= excluded (Kekulé mismatch).
             has_n_eq_a :-
                 double_bond_between(I, J),
                 symbol(I, "N"),
-                not ring_atom(I),
+                not aromatic_atom(I),
                 I != J.
         """,
         "domain": {0, 1}
@@ -2199,7 +2283,7 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
     21: {
         "predicate": "has_c_eq_c_qq",
         "definition": """
-            % Non-ring C=C required; ring C=C excluded (aromatic Kekulé mismatch).
+            % Non-aromatic C=C with two heteroatom neighbors.
             has_c_eq_c_qq :-
                 double_bond_between(I, J),
                 any_bond_between(J, K),
@@ -2208,8 +2292,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
                 symbol(J, "C"),
                 heteroatom(K),
                 heteroatom(L),
-                not ring_atom(I),
-                not ring_atom(J),
+                not aromatic_atom(I),
+                not aromatic_atom(J),
                 I != J, J != K, J != L, I != K, I != L, K != L.
         """,
         "domain": {0, 1}
@@ -2240,15 +2324,15 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
     76: {
         "predicate": "has_c_eq_c_aa",
         "definition": """
-            % Non-ring C=C required; ring C=C excluded (aromatic Kekulé mismatch).
+            % Non-aromatic C=C with two neighbors (any type).
             has_c_eq_c_aa :-
                 double_bond_between(I, J),
                 any_bond_between(J, K),
                 any_bond_between(J, L),
                 symbol(I, "C"),
                 symbol(J, "C"),
-                not ring_atom(I),
-                not ring_atom(J),
+                not aromatic_atom(I),
+                not aromatic_atom(J),
                 I != J, J != K, J != L, I != K, I != L, K != L.
         """,
         "domain": {0, 1}
