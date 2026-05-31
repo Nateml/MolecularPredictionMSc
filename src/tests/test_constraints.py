@@ -62,7 +62,7 @@ def test_constraint_soundness(
         for smi in smiles_list:
             mol = smiles_to_mol(smi)
             assert constraint.rdkit_check(mol), \
-                f"{constraint.name} violated by {smi}"
+                f"{constraint.name} violated by {smi}; using formula {formula}"
 
 
 # -------------------------
