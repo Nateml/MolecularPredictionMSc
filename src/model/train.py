@@ -451,6 +451,7 @@ def train(
         # Save latest checkpoint
         latest_ckpt = {
             "epoch": epoch,
+            "model_class": type(model).__name__,
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "categorical_sizes": model.categorical_sizes,
@@ -467,6 +468,7 @@ def train(
             best_val_loss = val_metrics["loss"]
             best_ckpt = {
                 "epoch": epoch,
+                "model_class": type(model).__name__,
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(),
                 "categorical_sizes": model.categorical_sizes,
