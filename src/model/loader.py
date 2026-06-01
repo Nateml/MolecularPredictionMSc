@@ -35,8 +35,8 @@ def load_model(checkpoint_path: Path):
             dropout=config.model.dropout,
         )
         # Restore normalization so quantile outputs can be inverted
-        cont_mean = ckpt.get("continuous_mean")
-        cont_std = ckpt.get("continuous_std")
+        cont_mean = ckpt.get("continuous_mean") or ckpt.get("mean")
+        cont_std = ckpt.get("continuous_std") or ckpt.get("std")
         if cont_mean is not None and cont_std is not None:
             dataset.normalise_continuous(cont_mean, cont_std)
     else:
