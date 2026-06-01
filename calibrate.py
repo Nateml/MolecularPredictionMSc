@@ -37,7 +37,7 @@ from data.split import (
     TEST_FRACTION,
     SEED,
 )
-from model.loader import load_model
+from model.loader import load_model, thresholds_path
 from model.conformal import calibrate_model
 
 
@@ -171,7 +171,7 @@ def main() -> None:
     num_q = getattr(model, "num_quantiles", 5)
     thresholds = calibrate_model(model, calib_loader, alpha=args.alpha, quantile_high_idx=num_q - 1)
 
-    out_path = checkpoint_path.parent / "conformal_thresholds.pt"
+    out_path = thresholds_path(checkpoint_path)
     torch.save(thresholds, out_path)
     print(f"Conformal thresholds saved to {out_path}")
 
