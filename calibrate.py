@@ -15,11 +15,12 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import pickle
 import sys
 from pathlib import Path
 
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -58,6 +59,14 @@ def parse_args() -> argparse.Namespace:
         "--calibration-set", default=None,
         help="Path to a calibration JSON dataset. Bypasses the split-hash pipeline.",
     )
+    p.add_argument(
+        "--calibration-pkl", default=None,
+        help="Path to a .pkl file containing a list of indices into the full dataset.",
+    )
+    p.add_argument(
+        "--full-dataset", default=None,
+        help="Path to the full dataset JSON. Required when --calibration-pkl is used.",
+    )
     return p.parse_args()
 
 
@@ -76,6 +85,14 @@ def main() -> None:
     print(f"Loading model from {checkpoint_path}...")
     model, dataset, device = load_model(checkpoint_path)
 
+    modes = sum([bool(args.calibration_set), bool(args.calibration_pkl)])
+    if modes > 1:
+        print("ERROR: --calibration-set and --calibration-pkl are mutually exclusive", file=sys.stderr)
+        sys.exit(1)
+    if args.calibration_pkl and not args.full_dataset:
+        print("ERROR: --full-dataset is required when using --calibration-pkl", file=sys.stderr)
+        sys.exit(1)
+
     if args.calibration_set:
         calib_path = Path(args.calibration_set)
         if not calib_path.exists():
@@ -89,6 +106,27 @@ def main() -> None:
                 dataset._cont_std.tolist(),
             )
         print(f"Using calibration set from {calib_path} ({len(calibration_ds)} samples)...")
+    elif args.calibration_pkl:
+        pkl_path = Path(args.calibration_pkl)
+        full_ds_path = Path(args.full_dataset)
+        if not pkl_path.exists():
+            print(f"Calibration pkl not found: {pkl_path}", file=sys.stderr)
+            sys.exit(1)
+        if not full_ds_path.exists():
+            print(f"Full dataset not found: {full_ds_path}", file=sys.stderr)
+            sys.exit(1)
+        schema_path = config.data.resolved_schema_path()
+        print(f"Loading full dataset from {full_ds_path}...")
+        full_ds = RawFeatureDataset(full_ds_path, schema_path)
+        if dataset._cont_mean is not None:
+            full_ds.normalise_continuous(
+                dataset._cont_mean.tolist(),
+                dataset._cont_std.tolist(),
+            )
+        with open(pkl_path, "rb") as f:
+            indices = pickle.load(f)
+        calibration_ds = Subset(full_ds, indices)
+        print(f"Using {len(indices)} samples from {pkl_path}...")
     else:
         data_path = config.data.resolved_dataset_path()
         schema_path = config.data.resolved_schema_path()
@@ -130,7 +168,8 @@ def main() -> None:
 
     print(f"Calibrating on {len(calibration_ds)} samples with alpha={args.alpha}...")
     calib_loader = DataLoader(calibration_ds, batch_size=config.training.batch_size, shuffle=False)
-    thresholds = calibrate_model(model, calib_loader, alpha=args.alpha)
+    num_q = getattr(model, "num_quantiles", 5)
+    thresholds = calibrate_model(model, calib_loader, alpha=args.alpha, quantile_high_idx=num_q - 1)
 
     out_path = checkpoint_path.parent / "conformal_thresholds.pt"
     torch.save(thresholds, out_path)

@@ -35,6 +35,7 @@ def load_model(checkpoint_path: Path):
             dropout=config.model.dropout,
         )
         # Restore normalization so quantile outputs can be inverted
+        # Fall back to legacy "mean"/"std" keys for older checkpoints
         cont_mean = ckpt.get("continuous_mean") or ckpt.get("mean")
         cont_std = ckpt.get("continuous_std") or ckpt.get("std")
         if cont_mean is not None and cont_std is not None:

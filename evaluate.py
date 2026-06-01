@@ -144,7 +144,7 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--test-set", default=None,
-        help="Path to test JSON dataset. Mutually exclusive with --from-splits.",
+        help="Path to test JSON dataset. Mutually exclusive with --from-splits and --split-pkl.",
     )
     p.add_argument(
         "--from-splits", action="store_true",
@@ -159,6 +159,14 @@ def parse_args() -> argparse.Namespace:
         "--split-hash", default=None,
         help="Hash of the split directory. If None, constructs from config paths. "
              "Only used with --from-splits.",
+    )
+    p.add_argument(
+        "--split-pkl", default=None,
+        help="Path to a .pkl file containing a list of indices into the full dataset.",
+    )
+    p.add_argument(
+        "--full-dataset", default=None,
+        help="Path to the full dataset JSON. Required when --split-pkl is used.",
     )
     p.add_argument(
         "--checkpoint", default=None,
@@ -528,11 +536,15 @@ def main() -> None:
     args = parse_args()
 
     # Validate arguments
-    if args.from_splits and args.test_set:
-        print("ERROR: Cannot specify both --test-set and --from-splits", file=sys.stderr)
+    modes = sum([bool(args.test_set), args.from_splits, bool(args.split_pkl)])
+    if modes > 1:
+        print("ERROR: --test-set, --from-splits, and --split-pkl are mutually exclusive", file=sys.stderr)
         sys.exit(1)
-    if not args.from_splits and not args.test_set:
-        print("ERROR: Must specify either --test-set or --from-splits", file=sys.stderr)
+    if modes == 0:
+        print("ERROR: Must specify one of --test-set, --from-splits, or --split-pkl", file=sys.stderr)
+        sys.exit(1)
+    if args.split_pkl and not args.full_dataset:
+        print("ERROR: --full-dataset is required when using --split-pkl", file=sys.stderr)
         sys.exit(1)
 
     checkpoint_path = Path(args.checkpoint) if args.checkpoint else (
@@ -560,6 +572,23 @@ def main() -> None:
         except FileNotFoundError as e:
             print(f"ERROR: {e}", file=sys.stderr)
             sys.exit(1)
+    elif args.split_pkl:
+        split_pkl_path = Path(args.split_pkl)
+        full_ds_path = Path(args.full_dataset)
+        if not split_pkl_path.exists():
+            print(f"Split pkl not found: {split_pkl_path}", file=sys.stderr)
+            sys.exit(1)
+        if not full_ds_path.exists():
+            print(f"Full dataset not found: {full_ds_path}", file=sys.stderr)
+            sys.exit(1)
+        schema_path = config.data.resolved_schema_path()
+        print(f"Loading full dataset from {full_ds_path}...")
+        full_ds = RawFeatureDataset(full_ds_path, schema_path)
+        with open(split_pkl_path, "rb") as f:
+            indices = pickle.load(f)
+        from torch.utils.data import Subset
+        test_ds = Subset(full_ds, indices)
+        print(f"Loaded {len(indices)} indices from {split_pkl_path}")
     else:
         test_path = Path(args.test_set)
         if not test_path.exists():
@@ -568,7 +597,7 @@ def main() -> None:
 
         schema_path = config.data.resolved_schema_path()
         print(f"Loading test set from JSON: {test_path}")
-        
+
         test_ds = RawFeatureDataset(test_path, schema_path)
         idx_path = test_path.with_name(test_path.name + ".idx")
         print(f"Index file path: {idx_path}")
@@ -650,7 +679,7 @@ def main() -> None:
                 all_cont_targets.append(cont_t)
 
             if thresholds is not None:
-                pred_sets = sets_from_outputs(outputs, thresholds)
+                pred_sets = sets_from_outputs(outputs, thresholds, quantile_high_idx=getattr(model, "num_quantiles", 5) - 1)
                 all_binary_sets.append(pred_sets["binary"].cpu().numpy())
                 for i, mask in enumerate(pred_sets["categorical"]):
                     all_cat_sets[i].append(mask.cpu().numpy())

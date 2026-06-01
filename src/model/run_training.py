@@ -121,8 +121,8 @@ def main():
         _, _ = test_ds.normalise_continuous(mean, std)
         # Save normalization stats for later use in evaluation
         norm_stats = {
-            "mean": mean,
-            "std": std
+            "continuous_mean": mean,
+            "continuous_std": std,
         }
         norm_stats_path = split_dir / "normalization.json"
         with open(norm_stats_path, "w", encoding="utf-8") as f:
