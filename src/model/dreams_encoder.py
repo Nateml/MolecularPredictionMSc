@@ -339,8 +339,15 @@ def pad_peak_batch(
         max_peaks = max(p.shape[0] for p in peak_lists) if peak_lists else 0
     
     batch_size = len(peak_lists)
-    padded = torch.zeros(batch_size, max_peaks, 2, dtype=torch.float32)
-    mask = torch.zeros(batch_size, max_peaks, dtype=torch.bool)
+    # Determine device from first non-empty peak list
+    device = peak_lists[0].device if peak_lists and peak_lists[0].shape[0] > 0 else torch.device('cpu')
+    for p in peak_lists:
+        if p.shape[0] > 0:
+            device = p.device
+            break
+    
+    padded = torch.zeros(batch_size, max_peaks, 2, dtype=torch.float32, device=device)
+    mask = torch.zeros(batch_size, max_peaks, dtype=torch.bool, device=device)
     
     for i, peaks in enumerate(peak_lists):
         num_peaks = min(peaks.shape[0], max_peaks)

@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader, Dataset, Subset, WeightedRandomSampler
 from model.model import MultitaskMLP, categorical_sizes_from_df, MultiQuantileLoss
 from loguru import logger
 
-from model.logging import create_progress_bar, update_progress_bar
+from model.Logging import create_progress_bar, update_progress_bar
 
 # Loss
 
@@ -277,7 +277,10 @@ def effective_num_weights_from_counts(counts: torch.Tensor, beta: float = 0.9999
 class ClassBalancedFocalLoss(nn.Module):
     def __init__(self, alpha: Optional[torch.Tensor] = None, gamma: float = 2.0, reduction: str = "mean"):
         super().__init__()
-        self.alpha = alpha
+        if alpha is not None:
+            self.register_buffer('alpha', alpha)
+        else:
+            self.alpha = None
         self.gamma = gamma
         self.reduction = reduction
 
@@ -420,7 +423,7 @@ def train(
             categorical_loss_fns.append(nn.CrossEntropyLoss(weight=w_cpu.to(device)))
 
     # Loss functions
-    binary_loss_fn = ClassBalancedFocalLoss(alpha=binary_alpha, gamma=2.0)
+    binary_loss_fn = ClassBalancedFocalLoss(alpha=binary_alpha, gamma=2.0).to(device)
     quantile_loss_fn = MultiQuantileLoss(quantiles=quantiles, device=device)
 
     # Checkpoint/resume support

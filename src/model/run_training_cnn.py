@@ -1,15 +1,16 @@
 from __future__ import annotations
 
+
 import json
 
 import torch
 from pathlib import Path
 from loguru import logger
 
-from config import config
-from model.model import MultitaskMLP, MultitaskMLPWithQRegression, MultitaskCNN
-from data.datasets import dataset_from_schema, RawFeatureDataset, SpectrumDataset
-from data.split import (
+from ..config import config
+from .model import MultitaskMLP, MultitaskMLPWithQRegression, MultitaskCNN
+from ..data.datasets import dataset_from_schema, RawFeatureDataset, SpectrumDataset
+from ..data.split import (
     split_dataset,
     splits_dir,
     splits_exist,
@@ -21,8 +22,8 @@ from data.split import (
     TEST_FRACTION,
     SEED
 )
-from model.train import train
-from model.conformal import calibrate_model
+from .train import train
+from .conformal import calibrate_model
 from torch.utils.data import DataLoader
 
 
@@ -43,8 +44,6 @@ def main():
     # Construct a CNN. If the dataset contains continuous targets (RawFeatureDataset), enable quantile regression heads.
     model_kwargs = dict(
         spectrum_len=config.model.spectrum_length,
-        conv_channels=getattr(config.model, "conv_channels", [32, 64, 128]),
-        kernel_sizes=getattr(config.model, "conv_kernel_sizes", None),
         num_binary=dataset.maccs_length,
         categorical_sizes=dataset.categorical_sizes(),
         dropout=config.model.dropout,
@@ -52,7 +51,7 @@ def main():
     )
 
     if isinstance(dataset, RawFeatureDataset):
-        print("Dataset is RawFeatureDataset, enabling regression heads in CNN.")
+        logger.info("Dataset is RawFeatureDataset, enabling regression heads in CNN.")
         # enable quantile regression heads for continuous targets
         model_kwargs.update(
             num_regression=dataset.n_continuous,
@@ -60,8 +59,7 @@ def main():
             regression_hidden_dim=getattr(config.model, "regression_hidden_dim", 64),
         )
     else: 
-        print("Dataset is not RawFeatureDataset, using CNN without regression heads.")
-        print("weewooweewooweewooweewooweewooweewooweewooweewooweewooweewooweewooweewooweewooweewooweewooweewooweewoowee")
+        logger.info("Dataset is not RawFeatureDataset, using CNN without regression heads.")
 
     model = MultitaskCNN(**model_kwargs)
 

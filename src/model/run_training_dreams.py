@@ -104,132 +104,79 @@ def main_with_dreams_encoder(
     logger.info(f"Trainable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}")
 
     # Setup train/val/test splits
-    if splits_exist(config.data.splits_dir()):
-        logger.info("Loading existing splits...")
-        splits = load_splits(config.data.splits_dir())
-        validate_splits_meta(splits, len(dataset), SEED)
+    fractions = {
+        "train": TRAIN_FRACTION,
+        "val": VAL_FRACTION,
+        "calibration": CALIBRATION_FRACTION,
+        "test": TEST_FRACTION,
+    }
+    split_dir = splits_dir(data_path, schema_path, fractions, SEED)
+    
+    if splits_exist(split_dir):
+        logger.info(f"Loading existing splits from {split_dir}...")
+        train_ds, val_ds, calibration_ds, test_ds = load_splits(split_dir)
     else:
-        logger.info("Creating new splits...")
-        splits = split_dataset(
+        logger.info(f"No splits found at {split_dir}, creating new splits...")
+        train_ds, val_ds, calibration_ds, test_ds = split_dataset(
             dataset,
             train_fraction=TRAIN_FRACTION,
             val_fraction=VAL_FRACTION,
             calibration_fraction=CALIBRATION_FRACTION,
             test_fraction=TEST_FRACTION,
             seed=SEED,
+            check_label_consistency=True,
         )
-        splits_dir().mkdir(parents=True, exist_ok=True)
-        splits_path = splits_dir() / "meta.json"
-        with open(splits_path, "w") as f:
-            json.dump(splits, f)
-        logger.info(f"Splits saved to {splits_path}")
+        split_dir.mkdir(parents=True, exist_ok=True)
 
-    # Create dataloaders
-    train_loader = DataLoader(
-        dataset.subset(splits["train"]),
-        batch_size=config.training.batch_size,
-        shuffle=True,
-        num_workers=config.training.num_workers,
-    )
-    val_loader = DataLoader(
-        dataset.subset(splits["val"]),
-        batch_size=config.training.batch_size,
-        shuffle=False,
-        num_workers=config.training.num_workers,
-    )
-    test_loader = DataLoader(
-        dataset.subset(splits["test"]),
-        batch_size=config.training.batch_size,
-        shuffle=False,
-        num_workers=config.training.num_workers,
-    )
-    calibration_loader = DataLoader(
-        dataset.subset(splits["calibration"]),
-        batch_size=config.training.batch_size,
-        shuffle=False,
-        num_workers=config.training.num_workers,
+    logger.info(
+        f"Train samples: {len(train_ds)}, Val samples: {len(val_ds)}, "
+        f"Calibration samples: {len(calibration_ds)}, Test samples: {len(test_ds)}"
     )
 
-    # Training with potential encoder freezing (transfer learning)
+    # Normalize continuous targets if applicable
+    norm_stats = None
+    if isinstance(dataset, RawFeatureDataset) and hasattr(train_ds, "normalise_continuous"):
+        logger.info("Normalising regression targets...")
+        mean, std = train_ds.normalise_continuous()
+        _, _ = val_ds.normalise_continuous(mean, std)
+        _, _ = calibration_ds.normalise_continuous(mean, std)
+        _, _ = test_ds.normalise_continuous(mean, std)
+        norm_stats = {"mean": mean.tolist() if hasattr(mean, "tolist") else mean,
+                      "std": std.tolist() if hasattr(std, "tolist") else std}
+
+    # Determine device
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    logger.info(f"Using device: {device}")
+
+    # Train model (with potential encoder freezing for transfer learning)
     if freeze_encoder_epochs > 0:
-        logger.info(f"Freezing encoder for first {freeze_encoder_epochs} epochs (transfer learning)")
-        model.freeze_encoder()
-        initial_epochs = freeze_encoder_epochs
-    else:
-        initial_epochs = 0
-
-    # Train model
+        logger.info(f"Training with encoder freezing: {freeze_encoder_epochs} epochs frozen, then fine-tuning")
+    
     logger.info(f"Starting training with {config.training.num_epochs} epochs...")
     model = train(
-        model,
-        train_loader=train_loader,
-        val_loader=val_loader,
-        num_epochs=config.training.num_epochs,
-        learning_rate=config.training.learning_rate,
-        save_path=output_path,
-        device=config.training.device,
+        model=model,
+        train_dataset=train_ds,
+        val_dataset=val_ds,
+        n_epochs=config.training.num_epochs,
+        batch_size=config.training.batch_size,
+        lr=config.training.learning_rate,
+        device=device,
+        output_path=output_path,
+        continuous_stats=norm_stats,
     )
 
-    # Unfreeze encoder if it was frozen
-    if freeze_encoder_epochs > 0:
-        logger.info("Unfreezing encoder for fine-tuning")
-        model.unfreeze_encoder()
-        # Could continue training with lower learning rate here if desired
-        # model = train(..., learning_rate=config.training.learning_rate * 0.1, ...)
-
-    # Test model
-    logger.info("Evaluating on test set...")
-    test_metrics = evaluate_model(model, test_loader, config.training.device)
-    logger.info(f"Test metrics: {test_metrics}")
-
-    # Calibrate (conformal prediction)
-    logger.info("Calibrating model with conformal prediction...")
-    conformal_thresholds = calibrate_model(
-        model,
-        calibration_loader,
-        device=config.training.device,
-        num_quantiles=config.model.num_quantiles,
-    )
-    
-    # Save calibration thresholds
-    calibration_path = config.checkpointing.resolved_save_dir() / "conformal_thresholds.pt"
-    torch.save(conformal_thresholds, calibration_path)
-    logger.info(f"Calibration thresholds saved to {calibration_path}")
+    # Compute conformal thresholds from calibration set
+    logger.info("Computing conformal thresholds from calibration set...")
+    calib_loader = DataLoader(calibration_ds, batch_size=config.training.batch_size, shuffle=False)
+    thresholds = calibrate_model(model, calib_loader, alpha=config.conformal.alpha)
+    thresholds_path = output_path.parent / "conformal_thresholds.pt"
+    torch.save(thresholds, thresholds_path)
+    logger.info(f"Conformal thresholds saved to {thresholds_path}")
 
     logger.info(f"Model saved to {output_path}")
     logger.info("Training complete!")
 
     return model
-
-
-def evaluate_model(model, dataloader, device):
-    """Simple evaluation function for testing."""
-    model.eval()
-    total_loss = 0.0
-    num_batches = 0
-
-    with torch.no_grad():
-        for batch in dataloader:
-            x, targets = batch
-            x = x.to(device)
-            
-            # Move targets to device
-            targets_device = {}
-            for key, val in targets.items():
-                if isinstance(val, torch.Tensor):
-                    targets_device[key] = val.to(device)
-                elif isinstance(val, list):
-                    targets_device[key] = [v.to(device) for v in val]
-                else:
-                    targets_device[key] = val
-
-            # Forward pass
-            outputs = model(x)
-            # Compute loss (you should use your actual loss function)
-            # For now, just a placeholder
-            num_batches += 1
-
-    return {"avg_loss": total_loss / max(num_batches, 1)}
 
 
 # ============================================================================

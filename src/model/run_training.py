@@ -6,10 +6,10 @@ import torch
 from pathlib import Path
 from loguru import logger
 
-from config import config
-from model.model import MultitaskMLP, MultitaskMLPWithQRegression
-from data.datasets import dataset_from_schema, RawFeatureDataset, SpectrumDataset
-from data.split import (
+from ..config import config
+from .model import MultitaskMLP, MultitaskMLPWithQRegression
+from ..data.datasets import dataset_from_schema, RawFeatureDataset, SpectrumDataset
+from ..data.split import (
     split_dataset,
     splits_dir,
     splits_exist,
@@ -21,8 +21,8 @@ from data.split import (
     TEST_FRACTION,
     SEED
 )
-from model.train import train
-from model.conformal import calibrate_model
+from .train import train
+from .conformal import calibrate_model
 from torch.utils.data import DataLoader
 
 def main():
@@ -80,7 +80,7 @@ def main():
     }
     split_dir = splits_dir(data_path, schema_path, fractions, SEED)
 
-    if splits_exist(split_dir) and False:  # disable loading existing splits for now to ensure fresh random splits each run
+    if splits_exist(split_dir) :  # disable loading existing splits for now to ensure fresh random splits each run
         logger.info(f"Loading existing splits from {split_dir}...")
         validate_splits_meta(split_dir, data_path, schema_path, fractions, SEED)
         train_ds, val_ds, calibration_ds, test_ds = load_splits(split_dir)
