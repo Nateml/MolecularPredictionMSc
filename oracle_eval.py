@@ -137,11 +137,14 @@ def diagnose_miss(
         try:
             interface = PredictionInterface.model_validate(working_entries)
             asp_constraints, atom_counts = compile_asp_constraint(interface)
-            candidates, _ = solve(
+            candidates, _, timed_out = solve(
                 asp_constraints, atom_counts,
                 output_list_of_smiles=True,
                 timeout=timeout,
             )
+            if timed_out:
+                working_entries[key] = entries[key]
+                continue
             cand_canons = {canonical(s) for s in candidates} - {None}
             if gt_canon in cand_canons:
                 label = _entry_label(key)
@@ -169,8 +172,21 @@ def _solve_record(
 ) -> dict:
     """Worker: solve one record. Module-level so ProcessPoolExecutor can pickle it."""
     t0 = time.monotonic()
-    candidates, _ = solve(asp_constraints, atom_counts, output_list_of_smiles=True, timeout=timeout)
+    candidates, _, timed_out = solve(asp_constraints, atom_counts, output_list_of_smiles=True, timeout=timeout)
     elapsed = time.monotonic() - t0
+
+    if timed_out:
+        return {
+            "idx": dataset_idx,
+            "smiles": gt_smi_raw,
+            "found": False,
+            "n_candidates": len(candidates),
+            "elapsed_s": round(elapsed, 2),
+            "culprits": [],
+            "asp_unsolvable": False,
+            "timed_out": True,
+        }
+
     cand_canons = {canonical(s) for s in candidates} - {None}
     found = gt_canon in cand_canons if gt_canon else False
 
@@ -183,10 +199,22 @@ def _solve_record(
             "elapsed_s": round(elapsed, 2),
             "culprits": [],
             "asp_unsolvable": False,
+            "timed_out": False,
         }
 
     # Miss — check if ASP can generate this molecule at all (unconstrained)
-    uc_candidates, _ = solve([], atom_counts, output_list_of_smiles=True, timeout=timeout)
+    uc_candidates, _, uc_timed_out = solve([], atom_counts, output_list_of_smiles=True, timeout=timeout)
+    if uc_timed_out:
+        return {
+            "idx": dataset_idx,
+            "smiles": gt_smi_raw,
+            "found": False,
+            "n_candidates": len(candidates),
+            "elapsed_s": round(elapsed, 2),
+            "culprits": [],
+            "asp_unsolvable": False,
+            "timed_out": True,
+        }
     uc_canons = {canonical(s) for s in uc_candidates} - {None}
     asp_unsolvable = gt_canon not in uc_canons if gt_canon else True
     return {
@@ -197,6 +225,7 @@ def _solve_record(
         "elapsed_s": round(elapsed, 2),
         "culprits": [],
         "asp_unsolvable": asp_unsolvable,
+        "timed_out": False,
     }
 
 
@@ -312,6 +341,7 @@ def main() -> None:
             candidates = []
             elapsed = 0.0
             asp_unsolvable = False
+            timed_out = False
 
             print(f"[{dataset_idx:4d}] solving: {gt_smi_raw[:80]}")
             while True:
@@ -320,8 +350,12 @@ def main() -> None:
                 asp_constraints, atom_counts = compile_asp_constraint(interface)
 
                 t0 = time.monotonic()
-                candidates, _ = solve(asp_constraints, atom_counts, output_list_of_smiles=True, timeout=args.timeout)
+                candidates, _, timed_out = solve(asp_constraints, atom_counts, output_list_of_smiles=True, timeout=args.timeout)
                 elapsed = time.monotonic() - t0
+
+                if timed_out:
+                    print(f"[{dataset_idx:4d}] TIMEO | {len(candidates):4d} candidates | {elapsed:5.1f}s | {gt_smi_raw[:60]}")
+                    break
 
                 cand_canons = {canonical(s) for s in candidates} - {None}
                 found = gt_canon in cand_canons
@@ -334,7 +368,11 @@ def main() -> None:
                     break
 
                 # Miss — check if ASP can generate this molecule at all (unconstrained)
-                uc_candidates, _ = solve([], atom_counts, output_list_of_smiles=True, timeout=args.timeout)
+                uc_candidates, _, uc_timed_out = solve([], atom_counts, output_list_of_smiles=True, timeout=args.timeout)
+                if uc_timed_out:
+                    print(f"    TIMEO: unconstrained solve timed out")
+                    timed_out = True
+                    break
                 uc_canons = {canonical(s) for s in uc_candidates} - {None}
                 if gt_canon not in uc_canons:
                     print(f"    UNSOLV: formula unreachable without constraints (ASP coverage gap)")
@@ -355,6 +393,7 @@ def main() -> None:
                 "elapsed_s": round(elapsed, 2),
                 "culprits": [{"constraint": label, "value": val} for label, val in culprits],
                 "asp_unsolvable": asp_unsolvable,
+                "timed_out": timed_out,
             })
 
     else:
@@ -366,7 +405,9 @@ def main() -> None:
                 futures[pool.submit(_solve_record, dataset_idx, gt_smi_raw, gt_canon, asp_constraints, atom_counts, args.timeout)] = dataset_idx
             for future in as_completed(futures):
                 result = future.result()
-                if result.get("asp_unsolvable"):
+                if result.get("timed_out"):
+                    tag = "TIMEO "
+                elif result.get("asp_unsolvable"):
                     tag = "UNSOLV"
                 elif result["found"]:
                     tag = "FOUND "
@@ -380,11 +421,13 @@ def main() -> None:
         results.sort(key=lambda r: r["idx"])
 
     n_eval = len(results)
+    n_timed_out = sum(1 for r in results if r.get("timed_out"))
     n_asp_unsolvable = sum(1 for r in results if r.get("asp_unsolvable"))
-    n_solvable = n_eval - n_asp_unsolvable
+    n_solvable = n_eval - n_asp_unsolvable - n_timed_out
     recall = 100 * n_found / n_solvable if n_solvable else 0.0
     print(f"\n=== Summary ===")
     print(f"Evaluated     : {n_eval}")
+    print(f"Timed out     : {n_timed_out}  (skipped — solve exceeded {args.timeout}s)")
     print(f"ASP unsolvable: {n_asp_unsolvable}  (formula unreachable even without constraints)")
     print(f"Found         : {n_found} / {n_solvable}  ({recall:.1f}% recall on solvable)")
     if n_skip:
@@ -408,6 +451,7 @@ def main() -> None:
                 "n_eval": n_eval,
                 "n_found": n_found,
                 "n_asp_unsolvable": n_asp_unsolvable,
+                "n_timed_out": n_timed_out,
                 "recall_pct": round(recall, 2),
                 "n_skipped": n_skip,
             },
@@ -450,6 +494,7 @@ def main() -> None:
             f"| Metric | Value |",
             f"|--------|-------|",
             f"| Records evaluated | {n_eval} |",
+            f"| Timed out | {n_timed_out} |",
             f"| ASP unsolvable | {n_asp_unsolvable} |",
             f"| Found | {n_found} |",
             f"| Missed | {n_solvable - n_found} |",
@@ -567,8 +612,20 @@ def main() -> None:
 
                 lines.append("")
 
-        misses = [r for r in results if not r["found"] and not r.get("asp_unsolvable")]
+        misses = [r for r in results if not r["found"] and not r.get("asp_unsolvable") and not r.get("timed_out")]
         unsolvable = [r for r in results if r.get("asp_unsolvable")]
+        timed_out_records = [r for r in results if r.get("timed_out")]
+
+        if timed_out_records:
+            lines += [
+                "## Timed Out Records",
+                f"Solve exceeded {args.timeout}s — skipped (no diagnosis performed).",
+                "| # | SMILES | Partial candidates | Time (s) |",
+                "|---|--------|--------------------|----------|",
+            ]
+            for r in timed_out_records:
+                lines.append(f"| {r['idx']} | `{r['smiles'][:60]}` | {r['n_candidates']} | {r['elapsed_s']} |")
+            lines.append("")
 
         if unsolvable:
             lines += [

@@ -21,6 +21,29 @@ HELPER_PREDICATES: Dict[str, str] = {
         is_multi_bond(J) :- multi_bond(J, _).
     """,
 
+    "ring_atom_with_dbl": """
+        % Two parallel ring closures between the same atom pair encode a double bond.
+        ring_closure_dbl(S, E) :-
+            cycle_start(S, CY),
+            cycle_end(E, CY),
+            cycle_start(S, CY2),
+            cycle_end(E, CY2),
+            CY != CY2.
+
+        % True when atom I is in any ring that contains at least one double bond,
+        % whether from a backbone multi_bond or a ring-closure double bond.
+        % Checks any ring containing I so that fused-ring aromaticity is captured
+        % even when the double bond is in an adjacent ring.
+        ring_atom_with_dbl(I) :-
+            atom_in_ring(I, CY),
+            atom_in_ring(K, CY),
+            multi_bond(K, _).
+        ring_atom_with_dbl(I) :-
+            atom_in_ring(I, CY),
+            atom_in_ring(S, CY),
+            ring_closure_dbl(S, _).
+    """,
+
     "adjacent_single": """
         adjacent_single(I, J) :-
             parent(I, _, J),
@@ -33,6 +56,18 @@ HELPER_PREDICATES: Dict[str, str] = {
 
         single_bond_between(I, J) :-
             adjacent_single(J, I).
+
+        % Ring closure bonds not encoded as double (parallel pair) are single.
+        % ring_closure_dbl is defined in the ring_atom_with_dbl helper (always loaded).
+        single_bond_between(I, J) :-
+            cycle_start(I, CY),
+            cycle_end(J, CY),
+            not ring_closure_dbl(I, J).
+
+        single_bond_between(J, I) :-
+            cycle_start(I, CY),
+            cycle_end(J, CY),
+            not ring_closure_dbl(I, J).
     """,
 
     "double_bond_between": """
@@ -42,6 +77,12 @@ HELPER_PREDICATES: Dict[str, str] = {
         double_bond_between(I, J) :-
             parent(J, _, I),
             multi_bond(I, 2).
+        % Ring closure double bonds (encoded as two parallel ring labels).
+        % ring_closure_dbl is defined in the ring_atom_with_dbl helper (always loaded).
+        double_bond_between(I, J) :-
+            ring_closure_dbl(I, J).
+        double_bond_between(J, I) :-
+            ring_closure_dbl(I, J).
     """,
 
     "triple_bond_between": """
@@ -151,36 +192,48 @@ HELPER_PREDICATES: Dict[str, str] = {
     # by only counting I in (S, E] (S itself would be outside the ring).
     "ring_double_bond_count": """
         ring_double_bond_count(C, N) :-
+            cycle_start(_, C),
+            N = #count { I : atom_in_ring(I, C), multi_bond(I, 2) }.
+    """,
+
+    # True when ring C has two backbone-adjacent atoms both with multi_bond (cumulene).
+    # Aromatic rings have alternating single/double bonds; cumulenes have consecutive ones.
+    "consecutive_ring_doubles": """
+        consecutive_ring_doubles(C) :-
             cycle_start(S, C),
             cycle_end(E, C),
-            N = #count { I : ring_atom(I), multi_bond(I, 2), S < I, I <= E }.
+            multi_bond(I, _),
+            multi_bond(J, _),
+            parent(I, _, J),
+            S < J, J <= E,
+            S < I, I <= E.
     """,
 
     # A ring cycle is aromatic in Kekulé representation if:
     #   6-membered ring with 3 alternating double bonds (benzene-type), or
     #   5-membered ring with 2 double bonds + one heteroatom (furan/pyrrole/thiophene).
+    # Consecutive double bonds (cumulenes) are excluded — they are never aromatic.
     "aromatic_ring_cycle": """
         aromatic_ring_cycle(C) :-
             cycle_start(S, C),
             cycle_end(E, C),
             E - S = 5,
-            ring_double_bond_count(C, 3).
+            ring_double_bond_count(C, 3),
+            not consecutive_ring_doubles(C).
         aromatic_ring_cycle(C) :-
             cycle_start(S, C),
             cycle_end(E, C),
             E - S = 4,
             ring_double_bond_count(C, 2),
             ring_atom(I), symbol(I, EL), EL != "C", EL != "H",
-            S <= I, I <= E.
+            S <= I, I <= E,
+            not consecutive_ring_doubles(C).
     """,
 
     "aromatic_atom": """
         aromatic_atom(I) :-
-            ring_atom(I),
-            aromatic_ring_cycle(C),
-            cycle_start(S, C),
-            cycle_end(E, C),
-            S <= I, I <= E.
+            atom_in_ring(I, C),
+            aromatic_ring_cycle(C).
     """,
 
     "aromatic_atom_count": """
@@ -426,17 +479,62 @@ HELPER_PREDICATES: Dict[str, str] = {
     "ring_atom": """
         ring_atom(I) :- cycle_start(I, _).
         ring_atom(I) :- cycle_end(I, _).
-        % main-chain atoms strictly between start and end of a ring are also ring atoms;
-        % branch atoms always have indices > MAIN_CHAIN_LEN >= E so are never in (S, E)
-        ring_atom(I) :- cycle_start(S, C), cycle_end(E, C), symbol(I, _), S < I, I < E.
+        % All atoms on the true ring backbone path are ring atoms.
+        ring_atom(I) :- atom_in_ring(I).
     """,
 
     "atom_in_ring": """
+        % Path-based ring membership: only atoms on the true DFS backbone
+        % path from cycle_start to cycle_end are ring members.
+        atom_in_ring(I, CY) :- ring_path_atom(CY, I).
+        % The atoms that open/close the ring are always ring members.
+        % ring_path_atom misses them when cycle_start and cycle_end are DFS siblings.
+        atom_in_ring(I, CY) :- cycle_start(I, CY).
+        atom_in_ring(I, CY) :- cycle_end(I, CY).
+        % Extended rule 1: when cycle_end is adjacent to cycle_start (E = S+1),
+        % the ring path runs backward through the root via atoms 1..S-1.
         atom_in_ring(I, CY) :-
             cycle_start(S, CY),
             cycle_end(E, CY),
+            E = S + 1,
             symbol(I, _),
-            S <= I, I <= E.
+            1 <= I, I < S.
+        % Extended rule 2: atom I is on the ring path when it branches toward
+        % cycle_start S (via child C1 with C1 <= S) and toward cycle_end E
+        % (via a different child C2 with C1 < C2 <= E).
+        % Handles backward-through-root rings of any size.
+        atom_in_ring(I, CY) :-
+            cycle_start(S, CY),
+            cycle_end(E, CY),
+            parent(I, _, C1),
+            parent(I, _, C2),
+            C1 != C2,
+            C1 <= S,
+            C1 < C2,
+            C2 <= E.
+        % Propagation: if atom I is in ring CY and has a child J strictly before
+        % cycle_start S, J is also on the ring path (backward path through root).
+        % In DFS-ordered trees all children have higher indices than parents, so
+        % J < S implies I < S < J is impossible -- J is only added when I < S,
+        % i.e. I was itself added by an extended rule, making this safe.
+        atom_in_ring(J, CY) :-
+            atom_in_ring(I, CY),
+            cycle_start(S, CY),
+            parent(I, _, J),
+            J < S.
+        % Forward propagation from branching atom toward cycle_end.
+        % For backward-through-root rings the branching atom has one child going
+        % toward the cycle_start (already covered by cycle_start/ring_path_atom)
+        % and another child going toward the cycle_end.  Atoms on the latter path
+        % are missed by ring_path_atom because they are not descendants of S.
+        % We propagate forward (I < J <= E) while excluding S's own subtree.
+        atom_in_ring(J, CY) :-
+            atom_in_ring(I, CY),
+            cycle_end(E, CY),
+            cycle_start(S, CY),
+            parent(I, _, J),
+            I < J, J <= E,
+            not is_descendant(S, J).
         atom_in_ring(I) :-
             atom_in_ring(I, _).
     """,
@@ -446,6 +544,30 @@ HELPER_PREDICATES: Dict[str, str] = {
             cycle_start(S, CY),
             cycle_end(E, CY),
             N = E - S + 1.
+    """,
+
+    "is_descendant": """
+        % is_descendant(A, B): B is A or a descendant of A in the parent (DFS) tree.
+        is_descendant(A, A) :- symbol(A, _).
+        is_descendant(A, C) :- parent(A, _, B), is_descendant(B, C).
+    """,
+
+    "ring_path_atom": """
+        % ring_path_atom(CY, I): I lies on the backbone DFS path from
+        % cycle_start(CY) to cycle_end(CY).  Replaces the old span heuristic
+        % I2 - I1 + 1 which overcounts branch atoms.
+        ring_path_atom(CY, I) :-
+            cycle_start(S, CY),
+            cycle_end(E, CY),
+            is_descendant(S, I),
+            is_descendant(I, E).
+    """,
+
+    "ring_size": """
+        % True ring size: count of atoms on the backbone path for ring CY.
+        ring_size(CY, N) :-
+            cycle_start(_, CY),
+            N = #count { I : atom_in_ring(I, CY) }.
     """,
 
     "same_ring": """
@@ -862,72 +984,37 @@ HELPER_PREDICATES: Dict[str, str] = {
 
     "ring_size_3_count": """
         ring_size_3_count(N) :-
-            N = #count {
-                CYCLE :
-                    cycle_start(I1, CYCLE),
-                    cycle_end(I2, CYCLE),
-                    I2 - I1 + 1 = 3
-            }.
+            N = #count { CYCLE : ring_size(CYCLE, 3) }.
     """,
 
     "ring_size_4_count": """
         ring_size_4_count(N) :-
-            N = #count {
-                CYCLE :
-                    cycle_start(I1, CYCLE),
-                    cycle_end(I2, CYCLE),
-                    I2 - I1 + 1 = 4
-            }.
+            N = #count { CYCLE : ring_size(CYCLE, 4) }.
     """,
 
     "ring_size_5_count": """
         ring_size_5_count(N) :-
-            N = #count {
-                CYCLE :
-                    cycle_start(I1, CYCLE),
-                    cycle_end(I2, CYCLE),
-                    I2 - I1 + 1 = 5
-            }.
+            N = #count { CYCLE : ring_size(CYCLE, 5) }.
     """,
 
     "ring_size_6_count": """
         ring_size_6_count(N) :-
-            N = #count {
-                CYCLE :
-                    cycle_start(I1, CYCLE),
-                    cycle_end(I2, CYCLE),
-                    I2 - I1 + 1 = 6
-            }.
+            N = #count { CYCLE : ring_size(CYCLE, 6) }.
     """,
 
     "ring_size_7plus_count": """
         ring_size_7plus_count(N) :-
-            N = #count {
-                CYCLE :
-                    cycle_start(I1, CYCLE),
-                    cycle_end(I2, CYCLE),
-                    I2 - I1 + 1 >= 7
-            }.
+            N = #count { CYCLE : ring_size(CYCLE, S), S >= 7 }.
     """,
 
     "ring_size_7_count": """
-    ring_size_7_count(N) :-
-        N = #count {
-            CYCLE :
-                cycle_start(I1, CYCLE),
-                cycle_end(I2, CYCLE),
-                I2 - I1 + 1 = 7
-        }.
+        ring_size_7_count(N) :-
+            N = #count { CYCLE : ring_size(CYCLE, 7) }.
     """,
 
     "ring_size_8plus_count": """
         ring_size_8plus_count(N) :-
-            N = #count {
-                CYCLE :
-                    cycle_start(I1, CYCLE),
-                    cycle_end(I2, CYCLE),
-                    I2 - I1 + 1 >= 8
-            }.
+            N = #count { CYCLE : ring_size(CYCLE, S), S >= 8 }.
     """,
     
     "nonring_o_a_a_atom": """
@@ -1127,30 +1214,99 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
     157: {
         "predicate": "has_c_o_single_bond",
         "definition": """
+            % Non-ring C-O single bond (alcohol, ether, ester, etc.)
             has_c_o_single_bond :-
                 single_bond_between(I, J),
                 symbol(I, "C"),
-                symbol(J, "O").
+                symbol(J, "O"),
+                not approx_ring_bond(I, J).
+
+            % Ring C-O single bond only when neither atom is in an aromatic ring.
+            % MACCS 157 uses [#6]-[#8] (explicit single) which does not match aromatic C-O bonds.
+            has_c_o_single_bond :-
+                single_bond_between(I, J),
+                symbol(I, "C"),
+                symbol(J, "O"),
+                approx_ring_bond(I, J),
+                not aromatic_atom(I),
+                not aromatic_atom(J).
+
+            % 3- and 4-membered rings are never aromatic, so a ring C-O single bond
+            % in a small ring is always a genuine single bond regardless of whether
+            % the ring also contains a double bond (e.g. oxirene-like C=C-O rings).
+            has_c_o_single_bond :-
+                single_bond_between(I, J),
+                symbol(I, "C"),
+                symbol(J, "O"),
+                atom_in_ring(I, CY),
+                atom_in_ring(J, CY),
+                ring_size(CY, N),
+                N <= 4.
         """,
         "domain": {0, 1}
     },
     158: {
         "predicate": "has_c_n_single_bond",
         "definition": """
+            % Non-ring C-N single bond
             has_c_n_single_bond :-
                 single_bond_between(I, J),
                 symbol(I, "C"),
-                symbol(J, "N").
+                symbol(J, "N"),
+                not approx_ring_bond(I, J).
+
+            % Ring C-N single bond only when neither atom is in an aromatic ring.
+            % MACCS 158 uses [#6]-[#7] which does not match aromatic C-N bonds.
+            has_c_n_single_bond :-
+                single_bond_between(I, J),
+                symbol(I, "C"),
+                symbol(J, "N"),
+                approx_ring_bond(I, J),
+                not aromatic_atom(I),
+                not aromatic_atom(J).
+
+            % 3- and 4-membered rings are never aromatic; ring C-N single bond in
+            % a small ring is always genuine regardless of other double bonds in the ring.
+            has_c_n_single_bond :-
+                single_bond_between(I, J),
+                symbol(I, "C"),
+                symbol(J, "N"),
+                atom_in_ring(I, CY),
+                atom_in_ring(J, CY),
+                ring_size(CY, N),
+                N <= 4.
         """,
         "domain": {0, 1}
     },
     24: {
         "predicate": "has_n_o_single_bond",
         "definition": """
+            % Non-ring-bond N-O single bond (including exocyclic bonds where one
+            % atom is in a ring). Excludes only bonds where BOTH atoms share a ring.
             has_n_o_single_bond :-
                 single_bond_between(I, J),
                 symbol(I, "N"),
-                symbol(J, "O").
+                symbol(J, "O"),
+                not approx_ring_bond(I, J).
+
+            % Ring N-O single bond only when neither atom is in an aromatic ring.
+            has_n_o_single_bond :-
+                single_bond_between(I, J),
+                symbol(I, "N"),
+                symbol(J, "O"),
+                approx_ring_bond(I, J),
+                not aromatic_atom(I),
+                not aromatic_atom(J).
+
+            % 3- and 4-membered rings are never aromatic; ring N-O single bond is genuine.
+            has_n_o_single_bond :-
+                single_bond_between(I, J),
+                symbol(I, "N"),
+                symbol(J, "O"),
+                atom_in_ring(I, CY),
+                atom_in_ring(J, CY),
+                ring_size(CY, SZ),
+                SZ <= 4.
         """,
         "domain": {0, 1}
     },
@@ -1170,20 +1326,27 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
     99: {
         "predicate": "has_c_c_double_bond",
         "definition": """
+            % Non-aromatic C=C: excludes bonds where both atoms are in aromatic rings.
+            % RDKit's MACCS 99 ([#6]=[#6]) does not match aromatic C:C bonds.
             has_c_c_double_bond :-
                 double_bond_between(I, J),
                 symbol(I, "C"),
-                symbol(J, "C").
+                symbol(J, "C"),
+                not aromatic_atom(I),
+                not aromatic_atom(J).
         """,
         "domain": {0, 1}
     },
     78: {
         "predicate": "has_c_n_double_bond",
         "definition": """
+            % Non-aromatic C=N only: same aromatic Kekulé mismatch as has_c_c_double_bond.
             has_c_n_double_bond :-
                 double_bond_between(I, J),
                 symbol(I, "C"),
-                symbol(J, "N").
+                symbol(J, "N"),
+                not aromatic_atom(I),
+                not aromatic_atom(J).
         """,
         "domain": {0, 1}
     },
@@ -1635,12 +1798,15 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
     45: {
         "predicate": "has_c_eq_c_n",
         "definition": """
+            % Non-aromatic C=C with adjacent N.
             has_c_eq_c_n :-
                 double_bond_between(I, J),
                 any_bond_between(J, K),
                 symbol(I, "C"),
                 symbol(J, "C"),
                 symbol(K, "N"),
+                not aromatic_atom(I),
+                not aromatic_atom(J),
                 I != J, J != K, I != K.
         """,
         "domain": {0, 1}
@@ -1648,6 +1814,7 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
     50: {
         "predicate": "has_c_eq_c_cc",
         "definition": """
+            % Non-aromatic C=C with two C neighbors.
             has_c_eq_c_cc :-
                 double_bond_between(I, J),
                 any_bond_between(J, K),
@@ -1656,6 +1823,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
                 symbol(J, "C"),
                 symbol(K, "C"),
                 symbol(L, "C"),
+                not aromatic_atom(I),
+                not aromatic_atom(J),
                 I != J, J != K, J != L, I != K, I != L, K != L.
         """,
         "domain": {0, 1}
@@ -1666,9 +1835,11 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
     119: {
         "predicate": "has_n_eq_a",
         "definition": """
+            % Non-aromatic N= only; aromatic ring N= excluded (Kekulé mismatch).
             has_n_eq_a :-
                 double_bond_between(I, J),
                 symbol(I, "N"),
+                not aromatic_atom(I),
                 I != J.
         """,
         "domain": {0, 1}
@@ -2112,6 +2283,7 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
     21: {
         "predicate": "has_c_eq_c_qq",
         "definition": """
+            % Non-aromatic C=C with two heteroatom neighbors.
             has_c_eq_c_qq :-
                 double_bond_between(I, J),
                 any_bond_between(J, K),
@@ -2120,6 +2292,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
                 symbol(J, "C"),
                 heteroatom(K),
                 heteroatom(L),
+                not aromatic_atom(I),
+                not aromatic_atom(J),
                 I != J, J != K, J != L, I != K, I != L, K != L.
         """,
         "domain": {0, 1}
@@ -2150,12 +2324,15 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
     76: {
         "predicate": "has_c_eq_c_aa",
         "definition": """
+            % Non-aromatic C=C with two neighbors (any type).
             has_c_eq_c_aa :-
                 double_bond_between(I, J),
                 any_bond_between(J, K),
                 any_bond_between(J, L),
                 symbol(I, "C"),
                 symbol(J, "C"),
+                not aromatic_atom(I),
+                not aromatic_atom(J),
                 I != J, J != K, J != L, I != K, I != L, K != L.
         """,
         "domain": {0, 1}
@@ -2263,7 +2440,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
                 I != J, J != K,
                 I < K.
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     104: {
@@ -2581,7 +2759,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
             has_element_104 :-
                 smiles_symbol(_, "Rf").
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     3: {
@@ -2606,7 +2785,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
             has_group_iva_va_via_rows4to6 :-
                 smiles_symbol(_, "Po").
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     4: {
@@ -2628,7 +2808,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
             has_actinide :- smiles_symbol(_, "No").
             has_actinide :- smiles_symbol(_, "Lr").
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     5: {
@@ -2640,7 +2821,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
             has_group_iiib_ivb :- smiles_symbol(_, "Zr").
             has_group_iiib_ivb :- smiles_symbol(_, "Hf").
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     6: {
@@ -2662,7 +2844,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
             has_lanthanide :- smiles_symbol(_, "Yb").
             has_lanthanide :- smiles_symbol(_, "Lu").
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     7: {
@@ -2678,7 +2861,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
             has_group_vb_vib_viib :- smiles_symbol(_, "W").
             has_group_vb_vib_viib :- smiles_symbol(_, "Re").
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     9: {
@@ -2694,7 +2878,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
             has_group_viii :- smiles_symbol(_, "Ir").
             has_group_viii :- smiles_symbol(_, "Pt").
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     12: {
@@ -2707,7 +2892,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
             has_group_ib_iib :- smiles_symbol(_, "Au").
             has_group_ib_iib :- smiles_symbol(_, "Hg").
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     18: {
@@ -2719,7 +2905,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
             has_group_iiia :- smiles_symbol(_, "In").
             has_group_iiia :- smiles_symbol(_, "Tl").
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     20: {
@@ -2727,7 +2914,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
         "definition": """
             has_silicon :- smiles_symbol(_, "Si").
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     27: {
@@ -2735,7 +2923,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
         "definition": """
             has_iodine :- smiles_symbol(_, "I").
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     31: {
@@ -2758,7 +2947,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
                 heteroatom(I),
                 smiles_symbol(J, "I").
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     35: {
@@ -2771,7 +2961,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
             has_alkali_metal :- smiles_symbol(_, "Cs").
             has_alkali_metal :- smiles_symbol(_, "Fr").
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     42: {
@@ -2779,7 +2970,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
         "definition": """
             has_fluorine :- smiles_symbol(_, "F").
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     44: {
@@ -2799,7 +2991,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
                 E != "Br",
                 E != "I".
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     46: {
@@ -2807,7 +3000,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
         "definition": """
             has_bromine :- smiles_symbol(_, "Br").
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     134: {
@@ -2818,7 +3012,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
             has_halogen :- smiles_symbol(_, "Br").
             has_halogen :- smiles_symbol(_, "I").
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     90: {
@@ -2865,7 +3060,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
             has_chlorine :-
                 smiles_symbol(_, "Cl").
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     107: {
@@ -2888,7 +3084,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
                 I != J, J != K, J != L,
                 I != K, I != L, K != L.
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     118: {
@@ -2971,7 +3168,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
             has_alkaline_earth :- smiles_symbol(_, "Ba").
             has_alkaline_earth :- smiles_symbol(_, "Ra").
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     ##############################
@@ -2983,7 +3181,7 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
             has_q_in_3m_ring :-
                 heteroatom(I),
                 atom_in_ring(I, CY),
-                ring_span_size(CY, 3).
+                ring_size(CY, 3).
         """,
         "domain": {0, 1}
     },
@@ -2994,7 +3192,7 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
             has_q_in_4m_ring :-
                 heteroatom(I),
                 atom_in_ring(I, CY),
-                ring_span_size(CY, 4).
+                ring_size(CY, 4).
         """,
         "domain": {0, 1}
     },
@@ -3005,7 +3203,7 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
             has_q_in_5m_ring :-
                 heteroatom(I),
                 atom_in_ring(I, CY),
-                ring_span_size(CY, 5).
+                ring_size(CY, 5).
         """,
         "domain": {0, 1}
     },
@@ -3016,7 +3214,7 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
             has_q_in_6m_ring :-
                 heteroatom(I),
                 atom_in_ring(I, CY),
-                ring_span_size(CY, 6).
+                ring_size(CY, 6).
         """,
         "domain": {0, 1}
     },
@@ -3086,7 +3284,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
                 symbol(J, "C"),
                 same_ring(I, J).
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     ##############################
@@ -3098,7 +3297,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
             % Aromatic: approximated as any atom in a ring span
             has_aromatic_atom :- atom_in_ring(_).
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     125: {
@@ -3109,7 +3309,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
                 aromatic_ring_count(N),
                 N > 1.
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     65: {
@@ -3121,7 +3322,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
                 symbol(J, "N"),
                 approx_ring_bond(I, J).
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     ##############################
@@ -3138,7 +3340,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
                 approx_ring_bond(J, K),
                 I != K.
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     113: {
@@ -3151,7 +3354,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
                 approx_nonring_bond(I, J),
                 atom_in_ring(J).
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     135: {
@@ -3164,7 +3368,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
                 approx_nonring_bond(I, J),
                 atom_in_ring(J).
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     87: {
@@ -3188,7 +3393,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
                 approx_nonring_bond(I, J),
                 atom_in_ring(J).
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
     64: {
@@ -3305,7 +3511,8 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
                 approx_nonring_bond(C, D),
                 A != C, B != D, A != D.
         """,
-        "domain": {0, 1}
+        "domain": {0, 1},
+        "unsupported": True,
     },
 
 }

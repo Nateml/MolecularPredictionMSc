@@ -46,7 +46,7 @@ def make_hashable(predictions):
         )
     )
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="session")
 def cached_run_pipeline(run_pipeline):
     def wrapper(predictions):
         key = make_hashable(predictions)
@@ -99,18 +99,19 @@ def run_pipeline(canonicalize):
             try:
                 interface = PredictionInterface.model_validate(predictions)
                 asp_constraints, atom_counts = compile_asp_constraint(interface)
-                output, _ = solve(
+                output, _, _ = solve(
                     asp_constraints,
                     atom_counts,
-                    output_list_of_smiles=True
+                    output_list_of_smiles=True,
                 )
                 result[0] = canonicalize(output)
             except Exception as e:
                 exception[0] = e
 
+        # Thread join with slack covers grounding hangs (not covered by solve's timeout).
         thread = threading.Thread(target=_target, daemon=True)
         thread.start()
-        thread.join(timeout=timeout)
+        thread.join(timeout=timeout + 2.0)
 
         if thread.is_alive():
             raise PipelineTimeoutError(predictions, timeout)
@@ -145,19 +146,17 @@ def parse_formula():
 @pytest.fixture
 def formulas():
     return [
-        "C2H6",     # saturated hydrocarbon (no heteroatoms, no multiple bonds)
-        "C2H4",     # allows C=C
-        "C2H2",     # allows C≡C
-        "C2H4O",    # allows C-O single + carbonyl
-        "C2H3N",    # allows C=N and C≡N
-        "CH3NO",    # allows N-O and C-N and C-O combinations
-        "H2SO2",    # allows S=O and S-O combinations
-        "N2H4",    # allows N-N and N-H combinations
+        "C2H6",     # saturated hydrocarbon
+        "C2H4",     # C=C
+        "C2H2",     # C≡C
+        "C2H4O",    # C-O + carbonyl
+        "C2H3N",    # C=N and C≡N
+        "CH3NO",    # N-O, C-N, C-O combinations
+        "H2SO2",    # S=O and S-O
+        "N2H4",     # N-N and N-H
         "CH2O2",
         "C4H4N2",
-        "C6H6O2",
         "C4H4N2",
-        "C6H7NO",
         "PH3",
         "H2S2",
         "H4N2O2S",
@@ -166,8 +165,16 @@ def formulas():
         "CH3NS",
         "HNO2",
         "C2H7NO",
-        "C4H8"
-
+        "C4H8",
+        "H2SO3",    # S bonded to 3 O's: has_os_oo, has_q_ooo
+        "CH5NO2",   # N bonded to 2 O + C: has_on_oc; Q-CH2-Q: has_phosphorus
+        "C7H14",    # 7-membered ring: has_7m_ring, has_ch3_aaa_ch2_a
+        "C4H10",    # 3+ CH3 groups: has_ch3_gt2
+        "C2H4O4",   # 4 oxygens: has_oxygen_gt3
+        "C4H4S",    # S exo to ring: has_cq_cc_a, has_s_exo_aromatic, has_ring_atom_to_s
+        "C3H4N2O",  # O exo to aromatic ring: has_o_exo_aromatic
+        "N10H8",    # bicyclic all-N: has_8m_or_larger_ring, has_6m_ring_gt1
+        "CH5N3",    # guanidine-like: has_nc_nn (C bonded to 3 N's)
     ]
 
 

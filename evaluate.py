@@ -9,6 +9,10 @@ to stdout and saved as CSV.
 With --conformal, loads conformal_thresholds.pt from the checkpoint directory
 and reports coverage rate, average set size, and singleton rate instead.
 
+For models with quantile regression heads, also reports per-feature continuous
+metrics (MAE, RMSE, coverage, avg interval size) and atom-count-specific
+metrics (median accuracy, joint formula accuracy, coverage, conformal coverage).
+
 Usage:
     # Load from JSON file
     python evaluate.py --test-set data/test.json
@@ -129,6 +133,8 @@ def load_dataset_from_splits(
     
     return subset, split_info
 
+ATOM_ELEMENTS = ["element_C", "element_H", "element_N", "element_O", "element_S", "element_P"]
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
@@ -163,8 +169,8 @@ def parse_args() -> argparse.Namespace:
         help="Sigmoid threshold for binary (MACCS) predictions (default: 0.5)",
     )
     p.add_argument(
-        "--output", default="eval_results.csv",
-        help="CSV output path (default: eval_results.csv)",
+        "--output-folder", default="eval_results/",
+        help="path to save CSVs to (default: eval_results/)",
     )
     p.add_argument(
         "--batch-size", type=int, default=None,
@@ -241,7 +247,6 @@ def _binary_conformal_metrics(
     for i in range(sets.shape[1]):
         s = sets[:, i, :]   # (N, 2)
         t = targets[:, i]   # (N,)
-        # covered if true class is in the set
         covered = np.where(t == 1, s[:, 1], s[:, 0])
         set_size = s[:, 0].astype(float) + s[:, 1].astype(float)
         rows.append({
@@ -267,6 +272,144 @@ def _categorical_conformal_metrics(
         "singleton_rate": float((set_size == 1).mean()),
         "support": n,
     }
+
+
+# ---------------------------------------------------------------------------
+# Continuous / quantile metrics
+# ---------------------------------------------------------------------------
+
+def _unnorm(arr: np.ndarray, mean: np.ndarray | None, std: np.ndarray | None) -> np.ndarray:
+    """Invert z-score normalisation. arr last dim must align with mean/std."""
+    if mean is None:
+        return arr
+    if arr.ndim == 3:  # (N, F, Q)
+        return arr * std[None, :, None] + mean[None, :, None]
+    return arr * std[None, :] + mean[None, :]  # (N, F)
+
+
+def _continuous_metrics(
+    q_orig: np.ndarray,  # (N, F, Q) in original space
+    t_orig: np.ndarray,  # (N, F) in original space
+    feature_names: list[str],
+    conf_lo: np.ndarray | None = None,  # (N, F)
+    conf_hi: np.ndarray | None = None,  # (N, F)
+) -> list[dict]:
+    """Per-feature continuous metrics."""
+    N, F, Q = q_orig.shape
+    mid_idx = Q // 2
+    lo = q_orig[:, :, 0]      # (N, F)
+    med = q_orig[:, :, mid_idx]
+    hi = q_orig[:, :, -1]
+
+    rows = []
+    for f in range(F):
+        mae = float(np.abs(med[:, f] - t_orig[:, f]).mean())
+        rmse = float(np.sqrt(((med[:, f] - t_orig[:, f]) ** 2).mean()))
+        covered = (lo[:, f] <= t_orig[:, f]) & (t_orig[:, f] <= hi[:, f])
+        coverage = float(covered.mean())
+        avg_interval = float((hi[:, f] - lo[:, f]).mean())
+        row: dict = {
+            "feature": feature_names[f],
+            "mae": mae,
+            "rmse": rmse,
+            "coverage": coverage,
+            "avg_interval_size": avg_interval,
+        }
+        if conf_lo is not None and conf_hi is not None:
+            c_covered = (conf_lo[:, f] <= t_orig[:, f]) & (t_orig[:, f] <= conf_hi[:, f])
+            c_size = conf_hi[:, f] - conf_lo[:, f]
+            row["conformal_coverage"] = float(c_covered.mean())
+            w_sum = float(c_size.sum())
+            row["conformal_coverage_weighted"] = (
+                float((c_covered.astype(float) * c_size).sum() / w_sum)
+                if w_sum > 0 else float("nan")
+            )
+            row["conformal_avg_interval_size"] = float(c_size.mean())
+        rows.append(row)
+    return rows
+
+
+def _atom_count_metrics(
+    q_orig: np.ndarray,       # (N, F, Q)
+    t_orig: np.ndarray,       # (N, F)
+    feature_names: list[str],
+    conf_lo: np.ndarray | None = None,  # (N, F)
+    conf_hi: np.ndarray | None = None,
+) -> tuple[list[dict], float, float | None, float | None]:
+    """
+    Atom-count-specific metrics for element_* features.
+
+    Returns:
+        atom_rows: per-element dict list
+        joint_accuracy: fraction where all median preds match true counts
+        joint_conformal_coverage: fraction where all conformal intervals cover truth (or None)
+        joint_conformal_coverage_weighted: weighted version (or None)
+    """
+    N, F, Q = q_orig.shape
+    mid_idx = Q // 2
+    lo = q_orig[:, :, 0]
+    med = q_orig[:, :, mid_idx]
+    hi = q_orig[:, :, -1]
+
+    atom_indices = [
+        (elem, feature_names.index(elem))
+        for elem in ATOM_ELEMENTS
+        if elem in feature_names
+    ]
+
+    atom_rows = []
+    joint_correct = np.ones(N, dtype=bool)
+    joint_conf_covered = np.ones(N, dtype=bool) if conf_lo is not None else None
+
+    for elem, fi in atom_indices:
+        med_int = np.round(med[:, fi]).astype(int)
+        true_int = np.round(t_orig[:, fi]).astype(int)
+        correct = med_int == true_int
+
+        raw_covered = (lo[:, fi] <= t_orig[:, fi]) & (t_orig[:, fi] <= hi[:, fi])
+        interval_size = hi[:, fi] - lo[:, fi]
+
+        row: dict = {
+            "element": elem,
+            "median_accuracy": float(correct.mean()),
+            "coverage": float(raw_covered.mean()),
+            "avg_interval_size": float(interval_size.mean()),
+        }
+
+        joint_correct &= correct
+
+        if conf_lo is not None and conf_hi is not None:
+            c_cov = (conf_lo[:, fi] <= t_orig[:, fi]) & (t_orig[:, fi] <= conf_hi[:, fi])
+            c_size = conf_hi[:, fi] - conf_lo[:, fi]
+            c_sum = float(c_size.sum())
+            row["conformal_coverage"] = float(c_cov.mean())
+            row["conformal_coverage_weighted"] = (
+                float((c_cov.astype(float) * c_size).sum() / c_sum)
+                if c_sum > 0 else float("nan")
+            )
+            row["conformal_avg_interval_size"] = float(c_size.mean())
+            if joint_conf_covered is not None:
+                joint_conf_covered &= c_cov
+
+        atom_rows.append(row)
+
+    joint_acc = float(joint_correct.mean()) if atom_indices else float("nan")
+
+    joint_conf_cov = None
+    joint_conf_cov_w = None
+    if joint_conf_covered is not None and atom_indices:
+        # Weight by sum of all atom interval sizes per molecule
+        conf_atom_sizes = np.stack(
+            [conf_hi[:, fi] - conf_lo[:, fi] for _, fi in atom_indices], axis=1
+        ).sum(axis=1)
+        joint_conf_cov = float(joint_conf_covered.mean())
+        w_sum = float(conf_atom_sizes.sum())
+        joint_conf_cov_w = (
+            float((joint_conf_covered.astype(float) * conf_atom_sizes).sum() / w_sum)
+            if w_sum > 0 else float("nan")
+        )
+
+    return atom_rows, joint_acc, joint_conf_cov, joint_conf_cov_w
 
 
 # ---------------------------------------------------------------------------
@@ -309,6 +452,72 @@ def _print_conformal_results(results: list[dict]) -> None:
             print(f"\n{label} macro-avg:")
             for metric in ("coverage", "avg_set_size", "singleton_rate"):
                 print(f"  {metric}: {np.mean([r[metric] for r in subset]):.4f}")
+
+
+def _print_continuous_results(
+    cont_rows: list[dict],
+    atom_rows: list[dict],
+    joint_acc: float,
+    joint_conf_cov: float | None,
+    joint_conf_cov_w: float | None,
+    has_conformal: bool,
+) -> None:
+    # All continuous features table
+    print("\n--- Continuous feature metrics ---")
+    if has_conformal:
+        hdr = (f"{'feature':<40} {'mae':>8} {'rmse':>8} {'cov':>6} "
+               f"{'interval':>10} {'conf_cov':>9} {'conf_cov_w':>11} {'conf_ivl':>9}")
+    else:
+        hdr = (f"{'feature':<40} {'mae':>8} {'rmse':>8} {'cov':>6} {'interval':>10}")
+    print(hdr)
+    print("-" * len(hdr))
+    for r in cont_rows:
+        if has_conformal:
+            print(
+                f"{r['feature']:<40} {r['mae']:>8.4f} {r['rmse']:>8.4f} "
+                f"{r['coverage']:>6.3f} {r['avg_interval_size']:>10.3f} "
+                f"{r.get('conformal_coverage', float('nan')):>9.3f} "
+                f"{r.get('conformal_coverage_weighted', float('nan')):>11.3f} "
+                f"{r.get('conformal_avg_interval_size', float('nan')):>9.3f}"
+            )
+        else:
+            print(
+                f"{r['feature']:<40} {r['mae']:>8.4f} {r['rmse']:>8.4f} "
+                f"{r['coverage']:>6.3f} {r['avg_interval_size']:>10.3f}"
+            )
+    macro_mae = np.mean([r["mae"] for r in cont_rows])
+    macro_cov = np.mean([r["coverage"] for r in cont_rows])
+    print(f"\ncontinuous macro-avg: mae={macro_mae:.4f}  coverage={macro_cov:.4f}")
+
+    # Atom count table
+    if not atom_rows:
+        return
+    print("\n--- Atom count metrics ---")
+    if has_conformal:
+        hdr2 = (f"{'element':<14} {'med_acc':>8} {'cov':>6} {'interval':>10} "
+                f"{'conf_cov':>9} {'conf_cov_w':>11} {'conf_ivl':>9}")
+    else:
+        hdr2 = f"{'element':<14} {'med_acc':>8} {'cov':>6} {'interval':>10}"
+    print(hdr2)
+    print("-" * len(hdr2))
+    for r in atom_rows:
+        if has_conformal:
+            print(
+                f"{r['element']:<14} {r['median_accuracy']:>8.3f} "
+                f"{r['coverage']:>6.3f} {r['avg_interval_size']:>10.3f} "
+                f"{r.get('conformal_coverage', float('nan')):>9.3f} "
+                f"{r.get('conformal_coverage_weighted', float('nan')):>11.3f} "
+                f"{r.get('conformal_avg_interval_size', float('nan')):>9.3f}"
+            )
+        else:
+            print(
+                f"{r['element']:<14} {r['median_accuracy']:>8.3f} "
+                f"{r['coverage']:>6.3f} {r['avg_interval_size']:>10.3f}"
+            )
+    print(f"\njoint formula accuracy (all atoms correct): {joint_acc:.4f}")
+    if has_conformal and joint_conf_cov is not None:
+        print(f"joint conformal coverage:                   {joint_conf_cov:.4f}")
+        print(f"joint conformal coverage (weighted):        {joint_conf_cov_w:.4f}")
 
 
 # ---------------------------------------------------------------------------
@@ -403,6 +612,7 @@ def main() -> None:
     print(f"Evaluating on {len(test_ds)} samples...")
 
     num_cat = len(underlying_ds.onehot_feature_order)
+    has_quantile = getattr(model, "num_regression", 0) > 0
 
     # Accumulators — point mode
     all_binary_preds: list[np.ndarray] = []
@@ -411,8 +621,14 @@ def main() -> None:
     all_cat_targets: list[list[int]] = [[] for _ in range(num_cat)]
 
     # Accumulators — conformal mode
-    all_binary_sets: list[np.ndarray] = []   # (N, C, 2) bool
-    all_cat_sets: list[list[np.ndarray]] = [[] for _ in range(num_cat)]  # per feat: (N, K)
+    all_binary_sets: list[np.ndarray] = []
+    all_cat_sets: list[list[np.ndarray]] = [[] for _ in range(num_cat)]
+
+    # Accumulators — continuous/quantile
+    all_quantile_preds: list[np.ndarray] = []   # (B, F, Q) each
+    all_cont_targets: list[np.ndarray] = []     # (B, F) each
+    all_conf_quantile_lo: list[np.ndarray] = [] # (B, F)
+    all_conf_quantile_hi: list[np.ndarray] = []
 
     model.eval()
     with torch.no_grad():
@@ -428,11 +644,20 @@ def main() -> None:
                 tgt_i = tgt.numpy() if hasattr(tgt, "numpy") else np.array(tgt)
                 all_cat_targets[i].extend(tgt_i.tolist())
 
+            # Continuous targets
+            if has_quantile and "continuous" in targets:
+                cont_t = targets["continuous"].float().numpy()  # (B, F)
+                all_cont_targets.append(cont_t)
+
             if thresholds is not None:
                 pred_sets = sets_from_outputs(outputs, thresholds)
                 all_binary_sets.append(pred_sets["binary"].cpu().numpy())
                 for i, mask in enumerate(pred_sets["categorical"]):
                     all_cat_sets[i].append(mask.cpu().numpy())
+                if has_quantile and pred_sets.get("quantile") is not None:
+                    q_sets = pred_sets["quantile"].cpu().numpy()  # (B, F, 2)
+                    all_conf_quantile_lo.append(q_sets[:, :, 0])
+                    all_conf_quantile_hi.append(q_sets[:, :, 1])
             else:
                 binary_probs = torch.sigmoid(outputs["binary"]).cpu()
                 binary_preds = (binary_probs >= args.threshold).int().numpy()
@@ -441,12 +666,17 @@ def main() -> None:
                     preds_i = logits.argmax(dim=-1).cpu().numpy()
                     all_cat_preds[i].extend(preds_i.tolist())
 
+            # Collect quantile preds (both modes)
+            if has_quantile and "quantile" in outputs and outputs["quantile"]:
+                q_stack = torch.stack(outputs["quantile"], dim=1).cpu().numpy()  # (B, F, Q)
+                all_quantile_preds.append(q_stack)
+
     binary_targets_arr = np.concatenate(all_binary_targets, axis=0)
 
     results: list[dict] = []
 
     if thresholds is not None:
-        binary_sets_arr = np.concatenate(all_binary_sets, axis=0)  # (N, C, 2)
+        binary_sets_arr = np.concatenate(all_binary_sets, axis=0)
         binary_rows = _binary_conformal_metrics(binary_sets_arr, binary_targets_arr)
         for i, metrics in enumerate(binary_rows):
             results.append({"target": f"maccs_{i}", "type": "binary", **metrics})
@@ -474,12 +704,85 @@ def main() -> None:
         _print_point_results(results)
         fieldnames = ["target", "type", "accuracy", "precision", "recall", "f1", "support"]
 
-    out_path = Path(args.output)
-    with open(out_path, "w", newline="") as f:
+    # ---------------------------------------------------------------------------
+    # Continuous metrics
+    # ---------------------------------------------------------------------------
+    cont_rows: list[dict] = []
+    atom_rows: list[dict] = []
+    joint_acc = float("nan")
+    joint_conf_cov = None
+    joint_conf_cov_w = None
+
+    if all_quantile_preds and all_cont_targets:
+        q_arr = np.concatenate(all_quantile_preds, axis=0)  # (N, F, Q)
+        t_arr = np.concatenate(all_cont_targets, axis=0)    # (N, F)
+
+        cont_mean = underlying_ds._cont_mean.numpy() if underlying_ds._cont_mean is not None else None
+        cont_std = underlying_ds._cont_std.numpy() if underlying_ds._cont_std is not None else None
+
+        q_orig = _unnorm(q_arr, cont_mean, cont_std)  # (N, F, Q)
+        t_orig = _unnorm(t_arr, cont_mean, cont_std)  # (N, F)
+
+        conf_lo_orig = conf_hi_orig = None
+        if all_conf_quantile_lo and all_conf_quantile_hi:
+            lo_norm = np.concatenate(all_conf_quantile_lo, axis=0)  # (N, F)
+            hi_norm = np.concatenate(all_conf_quantile_hi, axis=0)
+            conf_lo_orig = _unnorm(lo_norm, cont_mean, cont_std)
+            conf_hi_orig = _unnorm(hi_norm, cont_mean, cont_std)
+
+        feat_names = underlying_ds.continuous_feature_order
+        cont_rows = _continuous_metrics(q_orig, t_orig, feat_names, conf_lo_orig, conf_hi_orig)
+        atom_rows, joint_acc, joint_conf_cov, joint_conf_cov_w = _atom_count_metrics(
+            q_orig, t_orig, feat_names, conf_lo_orig, conf_hi_orig
+        )
+
+        _print_continuous_results(
+            cont_rows, atom_rows, joint_acc, joint_conf_cov, joint_conf_cov_w,
+            has_conformal=conf_lo_orig is not None,
+        )
+
+    # ---------------------------------------------------------------------------
+    # Save CSVs
+    # ---------------------------------------------------------------------------
+    out_dir = Path(args.output_folder)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    main_out = out_dir / "eval_results.csv"
+    with open(main_out, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(results)
-    print(f"\nResults saved to {out_path}")
+    print(f"\nResults saved to {main_out}")
+
+    if cont_rows:
+        cont_out = out_dir / "eval_results_continuous.csv"
+        cont_fieldnames = list(cont_rows[0].keys())
+        with open(cont_out, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=cont_fieldnames)
+            writer.writeheader()
+            writer.writerows(cont_rows)
+        print(f"Continuous results saved to {cont_out}")
+
+    if atom_rows:
+        atom_out = out_dir / "eval_results_atom_counts.csv"
+        atom_fieldnames = list(atom_rows[0].keys())
+        with open(atom_out, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=atom_fieldnames)
+            writer.writeheader()
+            writer.writerows(atom_rows)
+            writer.writerow({k: "" for k in atom_fieldnames})
+            summary: dict = {
+                "element": "JOINT",
+                "median_accuracy": joint_acc,
+                "coverage": float("nan"),
+                "avg_interval_size": float("nan"),
+            }
+            if "conformal_coverage" in atom_fieldnames:
+                summary["conformal_coverage"] = joint_conf_cov if joint_conf_cov is not None else float("nan")
+                summary["conformal_coverage_weighted"] = joint_conf_cov_w if joint_conf_cov_w is not None else float("nan")
+                summary["conformal_avg_interval_size"] = float("nan")
+            writer.writerow(summary)
+        print(f"Atom count results saved to {atom_out}")
 
 
 if __name__ == "__main__":
