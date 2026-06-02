@@ -56,8 +56,8 @@ def build_targets_from_schema(
         payload = json.load(fh)
 
     maccs_length: int = int(payload.get("maccs_length", 167))
-    onehot_names: List[str] = list(payload["onehot_names"])
-    feature_schema: Dict[str, Dict] = payload["feature_schema"]
+    onehot_names: List[str] = list(payload.get("onehot_names", []))
+    feature_schema: Dict[str, Dict] = payload.get("feature_schema", {})
 
     onehot_to_feature: Dict[str, str] = {}
     for feat_name, spec in feature_schema.items():

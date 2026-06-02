@@ -457,37 +457,12 @@ def build_feature_records(input_path: Path, output_path: Path, maccs_field: str)
     print(f"Combined vector length:    MACCS length + {len(STRUCTURAL_VECTOR_ORDER)}")
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Add graph-derived structural features to MoNA JSON records and merge them with MACCS."
-    )
-    parser.add_argument(
-        "--input",
-        type=Path,
-        default=Path(
-            "C:\\Users\\Tom\\Desktop\\Nieuwe map\\MolecularPredictionMSc\\Data Processing\\MoNa\\MoNA-filtered-curated-with-maccs.json"
-        ),
-        help="Path to the input JSON file containing smiles, spectrum, and MACCS vectors.",
-    )
-    parser.add_argument(
-        "--output",
-        type=Path,
-        default=Path(
-            "C:\\Users\\Tom\\Desktop\\Nieuwe map\\MolecularPredictionMSc\\Data Processing\\MoNa\\MoNA-filtered-curated-with-maccs-and-structure.json"
-        ),
-        help="Path to the output JSON file.",
-    )
-    parser.add_argument(
-        "--maccs-field",
-        type=str,
-        default="maccs",
-        help="Name of the field that contains the MACCS vector.",
-    )
-    return parser.parse_args()
 
 
 if __name__ == "__main__":
-    args = parse_args()
-    if not args.input.exists():
-        sys.exit(f"Input file not found: {args.input}")
-    build_feature_records(args.input, args.output, args.maccs_field)
+    input_path = Path(r"C:\Users\Tom\Desktop\Nieuwe map\MolecularPredictionMSc\output\test_maccs.json")
+    output_path = Path(r"C:\Users\Tom\Desktop\Nieuwe map\MolecularPredictionMSc\output\test_maccs_structural.json")
+    if not input_path.is_file():
+        sys.exit(f"Input file not found: {input_path}") 
+    
+    build_feature_records(input_path, output_path, maccs_field="maccs")
