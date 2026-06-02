@@ -146,6 +146,7 @@ def _categorical_predictions(
         predicate_name = f"{feature}_bin_{class_idx}"
         key = _PREDICATE_TO_FVD_KEY.get(predicate_name)
         if key is None:
+            print(f"Warning: no predicate definition found for {predicate_name}; skipping.")
             continue
         entries[key] = PredictionEntry(pred_set=[1], proba=[probs[class_idx]])
     return entries
