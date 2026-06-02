@@ -166,8 +166,12 @@ def build_continuous_records(
             first = False
             kept += 1
 
+            #also add continuous_feature_names to schema for later reference
+
             if idx % 10_000 == 0:
                 print(f"  {idx:,} / {total:,} processed, kept {kept:,} ...", flush=True)
+
+            
 
         f_out.write("\n]")
 

@@ -38,7 +38,11 @@ def compute_loss(
     ce_loss = 0.0
     for i, logits in enumerate(outputs["categorical"]):
         ce_loss += categorical_loss_fns[i](logits, targets["categorical"][i])
-    ce_loss /= len(outputs["categorical"])  # Average over heads
+    if len(outputs["categorical"]) > 0:
+        ce_loss /= len(outputs["categorical"])  # Average over heads
+    else:
+        #no categorical heads, ensure ce_loss is zero on the correct device
+        ce_loss = torch.tensor(0.0, device=loss.device)
 
     loss += categorical_weight * ce_loss
 
@@ -151,7 +155,10 @@ def evaluate(
         preds  = torch.cat([batch[i] for batch in all_cat_preds])
         labels = torch.cat([batch[i] for batch in all_cat_labels])
         cat_acc += (preds == labels).float().mean().item()
-    cat_acc /= n_heads
+    if n_heads > 0:
+        cat_acc /= n_heads
+    else:
+        cat_acc = 0.0
 
     return {
         "loss":                total_loss / len(loader.dataset),

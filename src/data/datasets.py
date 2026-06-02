@@ -756,7 +756,7 @@ def dataset_from_schema(
     """
     schema_type = _detect_schema_type(schema_path)
     cls = {
-        "packed": PackedDataset,
+        "packed": RawFeatureDataset,
         "raw": RawFeatureDataset,
     }[schema_type]
     return cls(data_path, schema_path, **kwargs)
