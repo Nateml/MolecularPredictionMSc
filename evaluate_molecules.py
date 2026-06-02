@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-End-to-end evaluation of the full neural + conformal + ASP pipeline. For each test spectrum, 
-it runs the trained MLP, optionally applies conformal prediction sets, converts predictions into ASP constraints, 
-and calls the clingo solver to enumerate candidate SMILES. Candidates are scored against ground-truth SMILES 
-using Tanimoto similarity (Morgan fingerprints, radius=2), size-penalised Tanimoto, and exact match. 
+End-to-end evaluation of the full neural + conformal + ASP pipeline. For each test spectrum,
+it runs the trained MLP, optionally applies conformal prediction sets, converts predictions into ASP constraints,
+and calls the clingo solver to enumerate candidate SMILES. Candidates are scored against ground-truth SMILES
+using Tanimoto similarity (Morgan fingerprints, radius=2), size-penalised Tanimoto, and exact match.
 
 Metrics
 -------
@@ -25,10 +25,12 @@ Outputs
 
 Usage
 -----
-    python evaluate_molecules.py
-    python evaluate_molecules.py --from-splits --split-name test
+    python evaluate_molecules.py --split-pkl data/splits/<hash>/test.pkl
+    python evaluate_molecules.py --split-pkl data/splits/<hash>/test.pkl \\
+        --full-dataset data/<dataset_name>.json
     python evaluate_molecules.py --test-set data/my_test.json
-    python evaluate_molecules.py --checkpoint models/run1/multitask_mlp.best.pt \\
+    python evaluate_molecules.py --split-pkl data/splits/<hash>/test.pkl \\
+        --checkpoint models/run1/multitask_mlp.best.pt \\
         --asp-timeout 30 --limit 200 --output results/run1/
 """
 from __future__ import annotations
@@ -43,7 +45,6 @@ import pickle
 import sys
 import time
 from pathlib import Path
-
 import numpy as np
 import torch
 
@@ -124,10 +125,11 @@ def _load_test_records(args: argparse.Namespace) -> list[dict]:
     """Return a list of raw record dicts from the requested test source.
 
     Two modes:
-      --test-set FILE : load from a JSON dataset file directly.
-      (default)       : load from saved split pickles (--from-splits).
+      --test-set FILE   : load from a JSON dataset file directly.
+      --split-pkl FILE  : load indices from a split pickle; full dataset
+                         loaded from --full-dataset or the sibling dataset.pkl.
 
-    Each returned dict contains at least 'spectrum' and 'smiles' keys
+    Each returned dict contains at least 'spectrum' and 'smiles' keys.
     """
     if args.test_set:
         data_path = Path(args.test_set)
@@ -140,32 +142,41 @@ def _load_test_records(args: argparse.Namespace) -> list[dict]:
         n = args.limit if args.limit else len(ds)
         return [ds._load_record(i) for i in range(min(n, len(ds)))]
 
-    # --- from saved splits (default) ----------------------------------------
-    from data.split import splits_dir
+    # --- from split pkl -------------------------------------------------------
+    split_pkl = Path(args.split_pkl)
+    if not split_pkl.exists():
+        raise FileNotFoundError(f"Split pkl not found: {split_pkl}")
 
-    data_path = (Path(args.data_path) if args.data_path
-                 else config.data.resolved_dataset_path())
-    schema_path = (Path(args.schema) if args.schema
-                   else config.data.resolved_schema_path())
-
-    fractions = {"train": 0.75, "val": 0.10, "calibration": 0.05, "test": 0.10}
-    split_dir = splits_dir(data_path, schema_path, fractions, seed=42)
-
-    if not split_dir.exists():
+    full_dataset = (
+        Path(args.full_dataset) if args.full_dataset
+        else split_pkl.parent / "dataset.pkl"
+    )
+    if not full_dataset.exists():
         raise FileNotFoundError(
-            f"Split directory not found: {split_dir}\n"
-            "Run src/data/split.py to generate splits first."
+            f"Full dataset pkl not found: {full_dataset}\n"
+            "Pass --full-dataset explicitly or place dataset.pkl in the same directory as the split."
         )
 
-    with open(split_dir / "dataset.pkl", "rb") as f:
-        full_dataset = pickle.load(f)
-    with open(split_dir / f"{args.split_name}.pkl", "rb") as f:
+    if full_dataset.suffix == ".json":
+        schema_path = (Path(args.schema) if args.schema
+                       else config.data.resolved_schema_path())
+        full_dataset = dataset_from_schema(
+            full_dataset, schema_path,
+            spectrum_len=config.model.spectrum_length,
+        )
+    else:
+        with open(full_dataset, "rb") as f:
+            full_dataset = pickle.load(f)
+
+    with open(split_pkl, "rb") as f:
         indices: list[int] = pickle.load(f)
 
     if args.limit:
         indices = indices[: args.limit]
-    log.info(f"Loaded {len(indices)} indices from split '{args.split_name}' at {split_dir.name}.")
-    return [full_dataset._load_record(idx) for idx in indices]
+
+    log.info(f"Loaded {len(indices)} indices from {split_pkl.name}.")
+
+    return [full_dataset._load_record(i) for i in indices]
 
 
 # ── inference pipeline ────────────────────────────────────────────────────────
@@ -177,6 +188,7 @@ def run_inference(
     device: torch.device,
     thresholds: dict | None,
     threshold: float,
+    use_median_counts: bool = False,
 ) -> tuple[dict, dict[str, tuple[int, int]], list[str]]:
     """Neural prediction → (structural_entries, count_ranges, extra_asp_rules).
 
@@ -247,6 +259,9 @@ def run_inference(
             single = _atom_counts_from_categorical(cat_logits, dataset.onehot_feature_order)
             count_ranges = {k: (v, v) for k, v in single.items()}
             extra = []
+
+    if use_median_counts:
+        count_ranges = {k: ((lo + hi) // 2, (lo + hi) // 2) for k, (lo, hi) in count_ranges.items()}
 
     return structural, count_ranges, extra
 
@@ -389,23 +404,18 @@ def parse_args() -> argparse.Namespace:
         help="Path to a JSON dataset file to use directly as the test set.",
     )
     src.add_argument(
-        "--from-splits", action="store_true",
-        help="Load test records from saved split pickles (default behaviour).",
+        "--split-pkl", default=None,
+        help="Path to a split indices .pkl file (e.g. data/splits/<hash>/test.pkl).",
     )
 
     p.add_argument(
-        "--split-name", default="test",
-        help="Split to evaluate: 'train', 'val', 'calibration', or 'test' "
-             "(default: test). Only used with --from-splits.",
-    )
-    p.add_argument(
-        "--data-path", default=None,
-        help="Path to the full dataset JSON. Defaults to config value. "
-             "Only used with --from-splits.",
+        "--full-dataset", default=None,
+        help="Path to the full dataset(.pkl/.json) file. "
+             "Defaults to the dataset defined in config.yaml."
     )
     p.add_argument(
         "--schema", default=None,
-        help="Path to schema JSON. Defaults to config value.",
+        help="Path to schema JSON. Defaults to config value. Only used with --test-set.",
     )
     p.add_argument(
         "--checkpoint", default=None,
@@ -445,6 +455,12 @@ def parse_args() -> argparse.Namespace:
         help="Maximum candidate SMILES stored per row in the output CSV "
              "(default: 50).",
     )
+    p.add_argument(
+        "--use-median-counts", action="store_true",
+        help="Use the predicted medians of atom counts instead of ranges, reducing ASP "
+        "calls significantly at the very high probability of not finding the true "
+        "molecule."
+    )
     return p.parse_args()
 
 
@@ -483,9 +499,7 @@ def main() -> None:
 
     # ── test records ─────────────────────────────────────────────────────────
     log.info("Loading test records ...")
-    records = _load_test_records(args)
-    if args.limit:
-        records = records[: args.limit]
+    records: list[dict] = _load_test_records(args)
     log.info(f"Evaluating {len(records)} samples.")
 
     # ── per-sample loop ───────────────────────────────────────────────────────
@@ -536,7 +550,7 @@ def main() -> None:
         # ── neural inference ────────────────────────────
         try:
             structural, count_ranges, extra_constraints = run_inference(
-                spectrum_str, model, model_dataset, device, thresholds, args.threshold
+                spectrum_str, model, model_dataset, device, thresholds, args.threshold, args.use_median_counts
             )
         except Exception as exc:
             row["status"] = "inference_error"
@@ -625,7 +639,7 @@ def main() -> None:
         "median_num_candidates": int(np.median(n_cands_arr)) if n_eval else 0,
         "checkpoint": str(ckpt_path),
         "split_or_file": (
-            args.test_set if args.test_set else args.split_name
+            args.test_set if args.test_set else args.split_pkl
         ),
         "asp_timeout_s": args.asp_timeout,
         "manual_threshold": args.threshold,
