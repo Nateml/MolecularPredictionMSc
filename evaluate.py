@@ -437,9 +437,12 @@ def _print_point_results(results: list[dict]) -> None:
     for label, type_key in [("binary (MACCS)", "binary"), ("categorical", "categorical")]:
         subset = [r for r in results if r["type"] == type_key]
         if subset:
-            print(f"\n{label} macro-avg:")
+            with_support = [r for r in subset if r["support"] > 0]
+            n_excluded = len(subset) - len(with_support)
+            print(f"\n{label} macro-avg (excluding {n_excluded} zero-support classes):")
             for metric in ("accuracy", "precision", "recall", "f1"):
-                print(f"  {metric}: {np.mean([r[metric] for r in subset]):.4f}")
+                vals = [r[metric] for r in with_support]
+                print(f"  {metric}: {np.mean(vals):.4f}" if vals else f"  {metric}: N/A")
 
 
 def _print_conformal_results(results: list[dict]) -> None:
@@ -456,9 +459,12 @@ def _print_conformal_results(results: list[dict]) -> None:
     for label, type_key in [("binary (MACCS)", "binary"), ("categorical", "categorical")]:
         subset = [r for r in results if r["type"] == type_key]
         if subset:
-            print(f"\n{label} macro-avg:")
+            with_support = [r for r in subset if r["support"] > 0]
+            n_excluded = len(subset) - len(with_support)
+            print(f"\n{label} macro-avg (excluding {n_excluded} zero-support classes):")
             for metric in ("coverage", "avg_set_size", "singleton_rate"):
-                print(f"  {metric}: {np.mean([r[metric] for r in subset]):.4f}")
+                vals = [r[metric] for r in with_support]
+                print(f"  {metric}: {np.mean(vals):.4f}" if vals else f"  {metric}: N/A")
 
 
 def _print_continuous_results(
