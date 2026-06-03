@@ -5944,6 +5944,7 @@ FEATURE_VECTOR_DEFINITIONS_CONTINUOUS: Dict[str, ASPContinuousPredicate] = {
     "aromatic_n_count":                     {"predicate": "aromatic_n_count",                        "definition": HELPER_PREDICATES["aromatic_n_count"]},
     "aromatic_o_count":                     {"predicate": "aromatic_o_count",                        "definition": HELPER_PREDICATES["aromatic_o_count"]},
     "aromatic_p_count":                     {"predicate": "aromatic_p_count",                        "definition": HELPER_PREDICATES["aromatic_p_count"]},
+    "aromatic_ring":                        {"predicate": "aromatic_ring_count",                     "definition": HELPER_PREDICATES["aromatic_ring_count"]},
     "aromatic_ring_count":                  {"predicate": "aromatic_ring_count",                     "definition": HELPER_PREDICATES["aromatic_ring_count"]},
     "aromatic_s_count":                     {"predicate": "aromatic_s_count",                        "definition": HELPER_PREDICATES["aromatic_s_count"]},
     "assigned_chiral_center_count":         {"predicate": "assigned_chiral_center_count",            "definition": HELPER_PREDICATES["assigned_chiral_center_count"]},
@@ -5965,7 +5966,7 @@ FEATURE_VECTOR_DEFINITIONS_CONTINUOUS: Dict[str, ASPContinuousPredicate] = {
     "formal_charge":                        {"predicate": "formal_charge",                           "definition": HELPER_PREDICATES["formal_charge"]},
     "fused_ring_pair_count":                {"predicate": "fused_ring_pair_count",                   "definition": HELPER_PREDICATES["fused_ring_pair_count"]},
     "fused_ring_system_count":              {"predicate": "fused_ring_system_count",                 "definition": HELPER_PREDICATES["fused_ring_system_count"]},
-    "halogenated_count":                          {"predicate": "halogenated_count",                       "definition": HELPER_PREDICATES["halogenated_count"]},
+    "halogenated":                          {"predicate": "halogenated_count",                       "definition": HELPER_PREDICATES["halogenated_count"]},
     "imide":                                {"predicate": "imide",                                   "definition": HELPER_PREDICATES["imide"]},
     "ketone":                               {"predicate": "ketone",                                  "definition": HELPER_PREDICATES["ketone"]},
     "lactam":                               {"predicate": "lactam",                                  "definition": HELPER_PREDICATES["lactam"]},
@@ -6000,9 +6001,10 @@ def KEYS():
     maccs_keys = set(MACCS_DEFINITIONS.keys())
     feature_vector_keys = set(FEATURE_VECTOR_DEFINITIONS.keys())
     count_keys = set(COUNT_KEYS)
+    continuous_keys = set(FEATURE_VECTOR_DEFINITIONS_CONTINUOUS.keys())
 
     assert maccs_keys.isdisjoint(feature_vector_keys), "MACCS keys and feature vector keys must be disjoint"
     assert maccs_keys.isdisjoint(count_keys), "MACCS keys and count keys must be disjoint"
     assert feature_vector_keys.isdisjoint(count_keys), "Feature vector keys and count keys must be disjoint"
 
-    return maccs_keys.union(feature_vector_keys).union(count_keys)
+    return maccs_keys.union(feature_vector_keys).union(count_keys).union(continuous_keys)

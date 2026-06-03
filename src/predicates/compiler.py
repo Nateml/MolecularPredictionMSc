@@ -1,8 +1,8 @@
 from typing import Tuple
 
-from predicates.definitions import MACCS_DEFINITIONS, FEATURE_VECTOR_DEFINITIONS
-from predicates.interface import PredictionInterface, PredictionEntry
+from predicates.definitions import MACCS_DEFINITIONS, FEATURE_VECTOR_DEFINITIONS, FEATURE_VECTOR_DEFINITIONS_CONTINUOUS
 from predicates.definitions import HELPER_PREDICATES
+from predicates.interface import PredictionInterface, PredictionEntry, ContinuousRange
 
 def compile_asp_constraint(interface: PredictionInterface, HELPERS = HELPER_PREDICATES) -> Tuple[str, dict[str, int]]:
     """
@@ -22,10 +22,19 @@ def compile_asp_constraint(interface: PredictionInterface, HELPERS = HELPER_PRED
 
     for k, entry in interface.root.items():
 
-        # Check if the entry is an integer (for atom counts) or a PredictionEntry (for feature predictions)
         if isinstance(entry, int):
-            # encode as constant
-            atom_counts[k] = entry 
+            atom_counts[k] = entry
+            continue
+
+        if isinstance(entry, ContinuousRange):
+            cont_def = FEATURE_VECTOR_DEFINITIONS_CONTINUOUS.get(k)
+            if cont_def is not None:
+                pred = cont_def["predicate"]
+                lo = max(0, round(entry.lo))
+                hi = max(lo, round(entry.hi))
+                rules.add(cont_def["definition"])
+                constraints.append(f":- {pred}(N), N < {lo}.")
+                constraints.append(f":- {pred}(N), N > {hi}.")
             continue
 
         assert isinstance(entry, PredictionEntry)
