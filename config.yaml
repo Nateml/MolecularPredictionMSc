@@ -11,9 +11,9 @@ training:
   learning_rate: 1e-3
 
 data:
-  dataset_path: "data/MoNA-filtered-curated-with-maccs-and-structure-deduped.json"
+  dataset_path: "C:\\Users\\Tom\\Desktop\\Nieuwe map\\MolecularPredictionMSc\\data\\MoNA-filtered-curated-with-maccs-and-structure-deduped.json"
   #dataset_path: "data/mixed_test.json"
-  schema_path: "data/feature_vector_continuous.json"
+  schema_path: "C:\\Users\\Tom\\Desktop\\Nieuwe map\\MolecularPredictionMSc\\output\\test_maccs_structural_schema.json"
   #schema_path: "data/feature_vector_mixed_schema.json"
   # dataset_path: "data/multitask_mlp_hardcoded.test.json"
 
