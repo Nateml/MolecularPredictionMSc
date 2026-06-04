@@ -91,6 +91,7 @@ def calibrate_model(
     quantiles: list[float] = [0.025, 0.05, 0.5, 0.95, 0.975],
     quantile_low_idx: int = 0,
     quantile_high_idx: int = 4,
+    joint: bool = False,
 ) -> dict:
     """
     Compute conformal prediction thresholds from a calibration set.
@@ -167,9 +168,50 @@ def calibrate_model(
         torch.quantile(s, level, interpolation="higher") for s in scores_categorical
     ]
     q_hat_quantile = (
-        torch.quantile(scores_quantile, level, dim=0, interpolation="higher")
+        torch.quantile(scores_quantile, level, dim=0, interpolation="higher").clamp(min=0.0)
         if scores_quantile is not None else None
     )
+
+    if joint:
+        # Rank-based joint calibration: for each sample compute the worst-case
+        # empirical CDF rank across all features, then threshold that scalar at
+        # the same level. Avoids dividing by near-zero marginal thresholds (which
+        # causes the ratio-based approach to explode when a feature is easy to predict).
+        # T is a coverage level in [0,1]; thresholds are recomputed at that level.
+        def _empirical_ranks(scores: torch.Tensor) -> torch.Tensor:
+            """Empirical CDF rank per column. (N, K) -> (N, K) in (0, 1]."""
+            N = scores.shape[0]
+            order = scores.argsort(dim=0)  # (N, K)
+            ranks = torch.empty_like(scores)
+            ranks.scatter_(
+                0, order,
+                (torch.arange(1, N + 1, dtype=scores.dtype) / N)
+                .unsqueeze(1).expand_as(scores),
+            )
+            return ranks
+
+        parts: list[torch.Tensor] = []
+        parts.append(_empirical_ranks(scores_binary).max(dim=1).values)
+
+        if scores_categorical:
+            cat_scores = torch.stack(scores_categorical, dim=1)  # (N, num_cat)
+            parts.append(_empirical_ranks(cat_scores).max(dim=1).values)
+
+        if scores_quantile is not None:
+            parts.append(_empirical_ranks(scores_quantile).max(dim=1).values)
+
+        joint_score = torch.stack(parts, dim=1).max(dim=1).values  # (N,)
+        T = torch.quantile(joint_score, level, interpolation="higher")  # scalar in [0, 1]
+
+        # Recompute per-feature thresholds at the joint level T
+        q_hat_binary = torch.quantile(scores_binary, T, dim=0, interpolation="higher")
+        q_hat_categorical = [
+            torch.quantile(s, T, interpolation="higher") for s in scores_categorical
+        ]
+        if scores_quantile is not None:
+            q_hat_quantile = torch.quantile(scores_quantile, T, dim=0, interpolation="higher").clamp(min=0.0)
+
+        print(f"Joint calibration: effective level T = {T.item():.4f} (marginal level was {level:.4f})")
 
     return {
         "binary_thresholds": q_hat_binary,
@@ -232,7 +274,7 @@ def sets_from_outputs(
     results["quantile"] = None
     if "quantile" in outputs and thresholds["quantile_thresholds"] is not None:
         q_outputs = torch.stack(outputs["quantile"], dim=1)  # (B, F, Q)
-        q_hat_q = thresholds["quantile_thresholds"].to(q_outputs.device)
+        q_hat_q = thresholds["quantile_thresholds"].to(q_outputs.device).clamp(min=0.0)
         q_low = q_outputs[:, :, quantile_low_idx]
         q_high = q_outputs[:, :, quantile_high_idx]
         results["quantile"] = torch.stack([q_low - q_hat_q, q_high + q_hat_q], dim=-1)  # (B, F, 2)

@@ -6,6 +6,7 @@ import sys
 import clingo
 import math
 import argparse
+import multiprocessing as mp
 from pathlib import Path
 from predicates.interface import PredictionInterface, PredictionEntry
 from predicates.compiler import compile_asp_constraint
@@ -205,6 +206,22 @@ def _model_to_smiles(model_str: str) -> str:
     return to_smiles(1)
 
 
+def _grounding_worker(
+    result_queue: mp.Queue,
+    flags: list[str],
+    program: str,
+    asp_lp_path: str,
+) -> None:
+    """Subprocess worker: ground + solve, put (visualisations, models_raw) into queue."""
+    ctl = clingo.Control(flags)
+    ctl.add("base", [], program)
+    ctl.load(asp_lp_path)
+    ctl.ground([("base", [])])
+    models_raw: list[str] = []
+    ctl.solve(on_model=lambda m: models_raw.append(" ".join(map(str, m.symbols(shown=True)))))
+    result_queue.put(([_model_to_smiles(m) for m in models_raw], models_raw))
+
+
 def solve(asp_code: list[str], atom_counts: dict, output_list_of_smiles: bool = False, debug=False, timeout: int = 0, canonicalize: bool = False) -> tuple[list | str, int, bool]:
     """Run ASP solver and return (SMILES list or formatted string, candidate count, timed_out)."""
     dou_num = _dou_numerator(atom_counts)
@@ -221,7 +238,6 @@ def solve(asp_code: list[str], atom_counts: dict, output_list_of_smiles: bool = 
         f'-c p={atom_counts["num_phosphorus"]}',
         f'-t {_CLINGO_THREADS}'
     ]
-    ctl = clingo.Control(flags)
 
     k = min_main_chain_len(sum(atom_counts.values()) - atom_counts['num_hydrogens'])
     program = f"min_main_chain_len({k}).\n" + "\n".join(asp_code)
@@ -231,23 +247,27 @@ def solve(asp_code: list[str], atom_counts: dict, output_list_of_smiles: bool = 
         with open(debug_path, "w", encoding="utf-8") as f:
             f.write(program)
 
-    ctl.add("base", [], program)
-    ctl.load(str(_ASP_DIR / "smiles.lp"))
-    ctl.ground([("base", [])])
-
-    models_raw = []
-    def on_model(model):
-        models_raw.append(" ".join(map(str, model.symbols(shown=True))))
-
-    with ctl.solve(async_=True, on_model=on_model) as handle:
-        finished = handle.wait(timeout if timeout > 0 else None)
-        timed_out = not finished
-        if timed_out:
-            print(f"Warning: ASP solve timed out after {timeout}s; results may be incomplete.", file=sys.stderr)
-            handle.cancel()
-
+    result_queue: mp.Queue = mp.Queue()
+    proc = mp.Process(
+        target=_grounding_worker,
+        args=(result_queue, flags, program, str(_ASP_DIR / "smiles.lp")),
+        daemon=True,
+    )
+    proc.start()
+    try:
+        proc.join(timeout if timeout > 0 else None)
+    except KeyboardInterrupt:
+        proc.terminate()
+        proc.join()
+        raise
+    timed_out = proc.is_alive()
+    if timed_out:
+        proc.terminate()
+        proc.join()
+        print(f"Warning: ASP grounding/solving timed out after {timeout}s; results may be incomplete.", file=sys.stderr)
+        return ([] if output_list_of_smiles else ""), 0, True
+    visualisations, models_raw = result_queue.get()
     model_count = len(models_raw)
-    visualisations = [_model_to_smiles(m) for m in models_raw]
 
     if output_list_of_smiles:
         if canonicalize:

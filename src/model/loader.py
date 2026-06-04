@@ -83,14 +83,24 @@ def load_model(checkpoint_path: Path):
     return model, dataset, device
 
 
-def thresholds_path(checkpoint_path: Path) -> Path:
+def thresholds_path(
+    checkpoint_path: Path,
+    alpha: int = config.conformal.alpha,
+    joint: bool = False,
+) -> Path:
     """Return the path where conformal thresholds for a checkpoint are stored."""
-    return checkpoint_path.parent / f"{checkpoint_path.stem}.thresholds.pt"
+    a_str = f"{alpha:.2f}".replace(".", "")
+    suffix = "joint.thresholds" if joint else "thresholds"
+    return checkpoint_path.parent / f"{checkpoint_path.stem}.a{a_str}.{suffix}.pt"
 
 
-def load_thresholds(checkpoint_path: Path) -> dict | None:
+def load_thresholds(
+    checkpoint_path: Path,
+    alpha: int = config.conformal.alpha,
+    joint: bool = False,
+) -> dict | None:
     """Load conformal thresholds saved alongside a checkpoint, or None if absent."""
-    path = thresholds_path(checkpoint_path)
+    path = thresholds_path(checkpoint_path, alpha=alpha, joint=joint)
     if path.exists():
         return torch.load(path, map_location="cpu", weights_only=True)
     return None
