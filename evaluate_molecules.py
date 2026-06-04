@@ -56,21 +56,9 @@ sys.path.insert(0, str(ROOT / "src"))
 from config import config
 from data.datasets import dataset_from_schema, RawFeatureDataset
 from model.loader import load_model, load_thresholds
-from model.conformal import sets_from_outputs
-from predicates.interface import PredictionInterface
+from model.predict import predict_single, RecordPrediction
 from predicates.compiler import compile_asp_constraint
 from asp.bridge import solve
-
-# Re-use inference helpers from infer.py — avoids duplicating logic.
-from infer import (
-    _conformal_structural_entries,
-    _conformal_atom_count_ranges,
-    _structural_entries,
-    _atom_count_ranges_from_quantiles,
-    _atom_counts_from_categorical,
-    _continuous_constraints_from_intervals,
-    _continuous_constraints_from_median,
-)
 
 try:
     from rdkit import Chem, DataStructs
@@ -181,95 +169,9 @@ def _load_test_records(args: argparse.Namespace) -> list[dict]:
 
 # ── inference pipeline ────────────────────────────────────────────────────────
 
-def run_inference(
-    spectrum_str: str,
-    model,
-    dataset: RawFeatureDataset,
-    device: torch.device,
-    thresholds: dict | None,
-    threshold: float,
-    use_median_counts: bool = False,
-) -> tuple[dict, dict[str, tuple[int, int]], list[str]]:
-    """Neural prediction → (structural_entries, count_ranges, extra_asp_rules).
-
-    Mirrors infer.py main() exactly, including conformal and fallback
-    threshold-based prediction.  Always returns count_ranges as a
-    dict {key: (lo, hi)} so the caller can iterate over combinations.
-
-    Uses `dataset` (model_dataset from load_model) for spectrum preprocessing
-    and for all schema / normalisation attributes.
-    """
-    x = dataset._spectrum_to_dense(spectrum_str).unsqueeze(0).to(device)
-    with torch.no_grad():
-        outputs = model(x)
-
-    is_raw = isinstance(dataset, RawFeatureDataset)
-    num_quantiles = getattr(model, "num_quantiles", config.model.num_quantiles)
-
-    if thresholds is not None:
-        q_low_idx = 0
-        q_high_idx = num_quantiles - 1
-        conf_sets = sets_from_outputs(outputs, thresholds, q_low_idx, q_high_idx)
-        structural = _conformal_structural_entries(conf_sets, dataset)
-
-        if is_raw and conf_sets.get("quantile") is not None:
-            count_ranges = _conformal_atom_count_ranges(
-                conf_sets, dataset.continuous_feature_order,
-                cont_mean=dataset._cont_mean, cont_std=dataset._cont_std,
-            )
-            extra = _continuous_constraints_from_intervals(
-                conf_sets["quantile"].squeeze(0),
-                dataset.continuous_feature_order,
-                cont_mean=dataset._cont_mean, cont_std=dataset._cont_std,
-            )
-        elif is_raw:
-            # Conformal thresholds loaded but quantile sets unavailable; fall
-            # back to raw quantile output ranges.
-            q_logits = [t.squeeze(0) for t in outputs["quantile"]]
-            count_ranges = _atom_count_ranges_from_quantiles(
-                q_logits, dataset.continuous_feature_order,
-                cont_mean=dataset._cont_mean, cont_std=dataset._cont_std,
-            )
-            extra = _continuous_constraints_from_median(
-                q_logits, dataset.continuous_feature_order,
-                cont_mean=dataset._cont_mean, cont_std=dataset._cont_std,
-            )
-        else:
-            # PackedDataset + conformal: counts from categorical argmax.
-            cat_logits = [t.squeeze(0) for t in outputs["categorical"]]
-            single = _atom_counts_from_categorical(cat_logits, dataset.onehot_feature_order)
-            count_ranges = {k: (v, v) for k, v in single.items()}
-            extra = []
-
-    else:
-        # No conformal thresholds, manual threshold on raw outputs.
-        structural = _structural_entries(outputs, dataset, threshold=threshold)
-        if is_raw:
-            q_logits = [t.squeeze(0) for t in outputs["quantile"]]
-            count_ranges = _atom_count_ranges_from_quantiles(
-                q_logits, dataset.continuous_feature_order,
-                cont_mean=dataset._cont_mean, cont_std=dataset._cont_std,
-            )
-            extra = _continuous_constraints_from_median(
-                q_logits, dataset.continuous_feature_order,
-                cont_mean=dataset._cont_mean, cont_std=dataset._cont_std,
-            )
-        else:
-            cat_logits = [t.squeeze(0) for t in outputs["categorical"]]
-            single = _atom_counts_from_categorical(cat_logits, dataset.onehot_feature_order)
-            count_ranges = {k: (v, v) for k, v in single.items()}
-            extra = []
-
-    if use_median_counts:
-        count_ranges = {k: ((lo + hi) // 2, (lo + hi) // 2) for k, (lo, hi) in count_ranges.items()}
-
-    return structural, count_ranges, extra
-
-
 def run_asp_pipeline(
-    structural: dict,
+    pred: RecordPrediction,
     count_ranges: dict[str, tuple[int, int]],
-    extra_constraints: list[str],
     asp_timeout: int,
     max_combos: int | None,
 ) -> tuple[list[str], bool]:
@@ -277,7 +179,6 @@ def run_asp_pipeline(
 
     Returns (unique_smiles, any_solve_timed_out).
     """
-    count_keys = list(count_ranges.keys())
     ranges_list = [range(lo, hi + 1) for lo, hi in count_ranges.values()]
 
     n_combos = 1
@@ -290,11 +191,8 @@ def run_asp_pipeline(
         )
 
     combo_iter = (
-        dict(zip(count_keys, combo))
-        for combo in itertools.islice(
-            itertools.product(*ranges_list),
-            max_combos,
-        )
+        dict(zip(count_ranges, combo))
+        for combo in itertools.islice(itertools.product(*ranges_list), max_combos)
     )
 
     seen: set[str] = set()
@@ -303,13 +201,12 @@ def run_asp_pipeline(
 
     for count_dict in combo_iter:
         try:
-            interface = PredictionInterface.model_validate({**structural, **count_dict})
+            interface = pred.to_interface(counts=count_dict)
         except Exception as exc:
             log.debug(f"Invalid interface for counts {count_dict}: {exc}")
             continue
 
         asp_constraints, atom_counts = compile_asp_constraint(interface)
-        asp_constraints = asp_constraints + extra_constraints
 
         try:
             cands, _, timed_out = solve(
@@ -549,9 +446,8 @@ def main() -> None:
 
         # ── neural inference ────────────────────────────
         try:
-            structural, count_ranges, extra_constraints = run_inference(
-                spectrum_str, model, model_dataset, device, thresholds, args.threshold, args.use_median_counts
-            )
+            x = model_dataset._spectrum_to_dense(spectrum_str)
+            pred = predict_single(x, model, model_dataset, threshold=args.threshold, thresholds=thresholds)
         except Exception as exc:
             row["status"] = "inference_error"
             n_failed += 1
@@ -559,11 +455,15 @@ def main() -> None:
             log.warning(f"[{sample_idx}] Inference error: {exc}")
             continue
 
+        count_ranges = pred.count_ranges
+        if args.use_median_counts:
+            count_ranges = {k: ((lo + hi) // 2, (lo + hi) // 2) for k, (lo, hi) in count_ranges.items()}
+
         # ── ASP solving ─────────────────────────────────
         try:
             t0 = time.monotonic()
             candidates, any_timed_out = run_asp_pipeline(
-                structural, count_ranges, extra_constraints,
+                pred, count_ranges,
                 asp_timeout=args.asp_timeout,
                 max_combos=args.max_combos,
             )
