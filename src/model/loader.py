@@ -1,4 +1,4 @@
-from config import config
+from src.config import config
 import torch
 from pathlib import Path
 from data.datasets import RawFeatureDataset, dataset_from_schema

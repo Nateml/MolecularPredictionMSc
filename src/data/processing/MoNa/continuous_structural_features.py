@@ -189,9 +189,9 @@ def build_continuous_records(
 
 
 if __name__ == "__main__":
-    inputpath = Path(r"C:\Users\Tom\Desktop\Nieuwe map\MolecularPredictionMSc\output\test_maccs_structural.json")
-    outputpath = Path(r"C:\Users\Tom\Desktop\Nieuwe map\MolecularPredictionMSc\output\test_maccs_structural_continuous.json")
-    schema_output_path = Path(r"C:\Users\Tom\Desktop\Nieuwe map\MolecularPredictionMSc\output\test_maccs_structural_schema.json")
+    inputpath = Path(r"C:\Users\Tom\Desktop\Nieuwe map\MolecularPredictionMSc\output\EI_Dataset_MACCS_structural.json")
+    outputpath = Path(r"C:\Users\Tom\Desktop\Nieuwe map\MolecularPredictionMSc\output\EI_Dataset_MACCS_Structural_Continuous.json")
+    schema_output_path = Path(r"C:\Users\Tom\Desktop\Nieuwe map\MolecularPredictionMSc\output\EI_Dataset_MACCS_Structural_Schema.json")
     if not inputpath.is_file():
         sys.exit(f"Input file not found: {inputpath}")
     build_continuous_records(inputpath, outputpath, schema_output_path, maccs_field="maccs")

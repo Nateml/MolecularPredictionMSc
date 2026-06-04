@@ -26,7 +26,7 @@ import torch.nn.functional as F
 # Project root on path so asp_bridge is importable.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from config import config
+from src.config import config
 from data.datasets import dataset_from_schema, RawFeatureDataset
 from model.model import MultitaskMLP, MultitaskMLPWithQRegression
 from model.conformal import sets_from_outputs

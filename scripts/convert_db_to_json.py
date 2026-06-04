@@ -136,9 +136,22 @@ def convert_db_to_json(input_db: Path, output_json: Path, limit: int = None) -> 
             query += f" LIMIT {limit}"
 
         cursor.execute(query)
-
+        skips = 0
         for row in cursor:
             compid, smiles, exactmolwt, mz_blob, intensity_blob = row
+
+            #skip if molecule containts atoms other than c, h, n, o, s, p
+            invalid = False
+            for letter in smiles:
+                if letter.lower() not in ['c', 'h', 'n', 'o', 's', 'p', '(', ')', '=', '#', '[', ']', '@', '+', '-', '/', '\\'] and not letter.isdigit():
+                    invalid = True
+                    break
+            if invalid:
+                skips += 1
+                if skips % 10000 == 0:
+                    print(f"  Skipped {skips:,} records with unsupported atoms ...", flush=True)
+                    print(f"    Example skipped SMILES: {smiles}")
+                continue
 
             try:
                 # Deserialize blobs

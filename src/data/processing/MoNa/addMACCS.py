@@ -83,8 +83,8 @@ def add_maccs_keys(input_path: Path, output_path: Path) -> None:
 
 
 if __name__ == "__main__":
-    input_path  = Path(r"C:\Users\Tom\Desktop\Nieuwe map\MolecularPredictionMSc\output\test.json")
-    output_path = Path(r"C:\Users\Tom\Desktop\Nieuwe map\MolecularPredictionMSc\output\test_maccs.json")
+    input_path  = Path(r"C:\Users\Tom\Desktop\Nieuwe map\MolecularPredictionMSc\output\EI_Dataset.json")
+    output_path = Path(r"C:\Users\Tom\Desktop\Nieuwe map\MolecularPredictionMSc\output\EI_Dataset_MACCS.json")
     if not input_path.is_file():
         sys.exit(f"Input file not found: {input_path}")
 

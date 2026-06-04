@@ -460,8 +460,8 @@ def build_feature_records(input_path: Path, output_path: Path, maccs_field: str)
 
 
 if __name__ == "__main__":
-    input_path = Path(r"C:\Users\Tom\Desktop\Nieuwe map\MolecularPredictionMSc\output\test_maccs.json")
-    output_path = Path(r"C:\Users\Tom\Desktop\Nieuwe map\MolecularPredictionMSc\output\test_maccs_structural.json")
+    input_path = Path(r"C:\Users\Tom\Desktop\Nieuwe map\MolecularPredictionMSc\output\EI_Dataset_MACCS.json")
+    output_path = Path(r"C:\Users\Tom\Desktop\Nieuwe map\MolecularPredictionMSc\output\EI_Dataset_MACCS_Continuous.json")
     if not input_path.is_file():
         sys.exit(f"Input file not found: {input_path}") 
     
