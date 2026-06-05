@@ -249,15 +249,16 @@ free_bonds(I, FREE_BONDS) :- preset_bonds(I, BONDS_PRE),
 % Not neccessary, but improves performance...
 :- branching(1, 4), parent(1, _, I), multi_bond(I, _),
     symbol(1, ELEMENT), element(ELEMENT, _, VALENCE), VALENCE <= 4.  % For higher valence elements, four bonds are possible
-% Prohibit three double bonds at root atom.
+% Prohibit three double bonds at root atom (unless root is hypervalent, e.g. S6/P5).
 :- multi_bond(I1, 2), multi_bond(I2, 2), multi_bond(I3, 2),
    parent(1, CHAIN_1, I1), parent(1, CHAIN_2, I2), parent(1, CHAIN_3, I3),
-   I1 < I2, I2 < I3, CHAIN_1 < CHAIN_2, CHAIN_2 < CHAIN_3.
-% Prohibit two double bond at non-root atom.
+   I1 < I2, I2 < I3, CHAIN_1 < CHAIN_2, CHAIN_2 < CHAIN_3,
+   symbol(1, ELEMENT), element(ELEMENT, _, VALENCE), VALENCE <= 4.
+% Prohibit two double bonds at non-root atom (unless that atom is hypervalent, e.g. S6/P5).
 :- multi_bond(I1, 2), multi_bond(I2, 2),
    parent(I, CHAIN_1, I1), parent(I, CHAIN_2, I2),
    I1 < I2, CHAIN_1 < CHAIN_2, I > 1,
-   symbol(1, ELEMENT), element(ELEMENT, _, VALENCE), VALENCE <= 4.  % For higher valence elements, two double bonds are possible
+   symbol(I, ELEMENT), element(ELEMENT, _, VALENCE), VALENCE <= 4.
 % Prohibit multiple triple bonds at children of root atom.
 :- multi_bond(I1, 3), multi_bond(I2, 3),
    parent(1, CHAIN_1, I1), parent(1, CHAIN_2, I2),
