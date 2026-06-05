@@ -36,6 +36,7 @@ Usage
 from __future__ import annotations
 
 import argparse
+import bisect
 import csv
 import itertools
 import json
@@ -60,12 +61,13 @@ from model.loader import load_model, load_thresholds, thresholds_path
 from model.predict import predict_single, RecordPrediction
 from predicates.compiler import compile_asp_constraint
 from predicates.interface import PredictionInterface
+from predicates.definitions import MACCS_DEFINITIONS, FEATURE_VECTOR_DEFINITIONS
 from asp.bridge import solve
 from filters import dou_filter, heavy_atom_filter, small_mol_filter, element_type_filter, formula_complexity_filter, formula_complexity_score
 
 try:
     from rdkit import Chem, DataStructs
-    from rdkit.Chem import AllChem
+    from rdkit.Chem import AllChem, MACCSkeys
     _HAS_RDKIT = True
 except ImportError:
     _HAS_RDKIT = False
@@ -82,6 +84,80 @@ def canonical(smi: str) -> str | None:
         return smi
     mol = Chem.MolFromSmiles(smi)
     return Chem.MolToSmiles(mol) if mol else None
+
+
+def canonical_no_stereo(smi: str) -> str | None:
+    """Canonical SMILES with all stereochemistry stripped."""
+    if not _HAS_RDKIT:
+        return smi
+    mol = Chem.MolFromSmiles(smi)
+    if mol is None:
+        return None
+    Chem.RemoveStereochemistry(mol)
+    return Chem.MolToSmiles(mol)
+
+
+def diagnose_empty_candidates(
+    record: dict,
+    pred: RecordPrediction,
+    model_dataset,
+) -> tuple[str, list[str]]:
+    """Determine why constrained ASP returned no candidates.
+
+    Checks whether every GT structural feature is inside the corresponding
+    prediction set.  If all are covered, the network's constraints are
+    consistent with the truth and the empty set is an ASP implementation bug.
+    If any are missed, the network predicted wrong constraints.
+
+    Returns:
+        ("asp_bug", [])                  — all GT features covered
+        ("network_error", [descriptions]) — one or more GT features missed
+    """
+    if not _HAS_RDKIT:
+        return "unknown", []
+
+    gt_smiles = record.get("smiles", "")
+    gt_structural = record.get("structural_features", {})
+
+    base_ds = model_dataset.dataset if hasattr(model_dataset, "dataset") else model_dataset
+    has_edges = hasattr(base_ds, "onehot_feature_edges")
+
+    gt_mol = Chem.MolFromSmiles(gt_smiles) if gt_smiles else None
+    gt_maccs = MACCSkeys.GenMACCSKeys(gt_mol) if gt_mol is not None else None
+
+    missed: list[str] = []
+
+    for key_id, entry in pred.structural.items():
+        if key_id in MACCS_DEFINITIONS:
+            if gt_maccs is None:
+                continue
+            gt_val = int(gt_maccs[key_id])
+            if gt_val not in entry.pred_set:
+                missed.append(
+                    f"maccs_{key_id}:{MACCS_DEFINITIONS[key_id]['predicate']}"
+                    f"(gt={gt_val},pred={entry.pred_set})"
+                )
+
+        elif key_id in FEATURE_VECTOR_DEFINITIONS and has_edges:
+            predicate = FEATURE_VECTOR_DEFINITIONS[key_id]["predicate"]
+            try:
+                feat_name, bin_str = predicate.rsplit("_bin_", 1)
+                pred_bin = int(bin_str)
+            except ValueError:
+                continue
+            raw = gt_structural.get(feat_name)
+            if raw is None:
+                continue
+            edges = base_ds.onehot_feature_edges.get(feat_name)
+            if edges is None:
+                continue
+            gt_bin = bisect.bisect_left(edges, float(raw))
+            if gt_bin != pred_bin:
+                missed.append(
+                    f"{feat_name}(gt_bin={gt_bin},pred_bin={pred_bin},raw={raw})"
+                )
+
+    return ("network_error", missed) if missed else ("asp_bug", [])
 
 
 def _morgan_fp(smi: str):
@@ -140,9 +216,9 @@ def _load_test_records(args: argparse.Namespace, filter="medium") -> list[dict]:
             rec = ds._load_record(i)
             smiles = rec.get("smiles")
             # Filter
-            if not formula_complexity_filter(smiles, max_score=13):
-                n_skipped += 1
-                continue
+            #if not formula_complexity_filter(smiles, max_score=24):
+                #n_skipped += 1
+                #continue
 
             out.append(rec)
             out_len += 1
@@ -192,9 +268,9 @@ def _load_test_records(args: argparse.Namespace, filter="medium") -> list[dict]:
         rec = full_dataset._load_record(i)
         smiles = rec.get("smiles")
         # Filter
-        if not formula_complexity_filter(smiles, max_score=13):
-            n_skipped += 1
-            continue
+        #if not formula_complexity_filter(smiles, max_score=24):
+            #n_skipped += 1
+            #continue
 
         out.append(rec)
         out_len += 1
@@ -331,6 +407,7 @@ def evaluate_candidates(
     if gt_canon is None:
         return 0.0, 0.0, False
 
+    gt_canon_ns = canonical_no_stereo(gt_smiles)
     gt_fp = _morgan_fp(gt_canon)
     max_tan = 0.0
     exact_match = False
@@ -339,7 +416,7 @@ def evaluate_candidates(
         cand_canon = canonical(cand)
         if cand_canon is None:
             continue
-        if cand_canon == gt_canon:
+        if canonical_no_stereo(cand) == gt_canon_ns:
             exact_match = True
             max_tan = 1.0
             break
@@ -459,6 +536,10 @@ def parse_args() -> argparse.Namespace:
              "thresholds (.joint.thresholds.pt); 'marginal' uses the per-feature thresholds "
              "(.thresholds.pt).",
     )
+    p.add_argument(
+        "--alpha", type=float, default=None,
+        help="The value of alpha (significance level) to try and load conformal thresholds for. Defaults to whatever is set in config.yaml."
+    )
     return p.parse_args()
 
 
@@ -467,6 +548,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     out_dir = Path(args.output)
+
+    alpha = args.alpha if args.alpha else config.conformal.alpha
 
     # ── model ────────────────────────────────────────────────────────────────
     ckpt_path = (
@@ -487,9 +570,9 @@ def main() -> None:
         model = model.to(device)
 
     use_joint = args.thresholds_type == "joint"
-    thresholds = load_thresholds(ckpt_path, alpha=config.conformal.alpha, joint=use_joint)
+    thresholds = load_thresholds(ckpt_path, alpha=alpha, joint=use_joint)
     if thresholds is not None:
-        log.info(f"Conformal thresholds loaded (alpha={config.conformal.alpha}, type={args.thresholds_type}).")
+        log.info(f"Conformal thresholds loaded (alpha={alpha}, type={args.thresholds_type}).")
     else:
         log.info(
             f"No conformal thresholds found; "
@@ -506,6 +589,9 @@ def main() -> None:
     n_failed = 0
     n_timeout = 0
     n_empty = 0
+    n_asp_unsupported = 0
+    n_empty_asp_bug = 0
+    n_empty_network_error = 0
 
     for sample_idx, record in tqdm(enumerate(records)):
         gt_smiles_raw: str | None = record.get("smiles")
@@ -521,6 +607,8 @@ def main() -> None:
             "exact_match": False,
             "timed_out": False,
             "status": "ok",
+            "empty_reason": "",
+            "missed_features": "",
             "candidates": "",
             "unc_num_candidates": 0,
             "unc_max_tanimoto": 0.0,
@@ -616,15 +704,18 @@ def main() -> None:
             row["status"] = "ok"
 
         # ── unconstrained ASP solve (same formula space, no structural constraints) ──
-        try:
-            unc_candidates, unc_timed_out = run_asp_pipeline_unconstrained(
-                count_ranges,
-                asp_timeout=args.asp_timeout,
-                max_combos=args.max_combos,
-            )
-        except Exception as exc:
-            log.debug(f"[{sample_idx}] Unconstrained ASP error: {exc}")
-            unc_candidates, unc_timed_out = [], False
+        if any_timed_out:
+            unc_candidates, unc_timed_out = [], True
+        else:
+            try:
+                unc_candidates, unc_timed_out = run_asp_pipeline_unconstrained(
+                    count_ranges,
+                    asp_timeout=args.asp_timeout,
+                    max_combos=args.max_combos,
+                )
+            except Exception as exc:
+                log.debug(f"[{sample_idx}] Unconstrained ASP error: {exc}")
+                unc_candidates, unc_timed_out = [], False
 
         unc_n_cands = len(unc_candidates)
         unc_max_tan, unc_spt, unc_exact = evaluate_candidates(gt_smiles_raw, unc_candidates)
@@ -636,6 +727,27 @@ def main() -> None:
             "unc_exact_match": unc_exact,
             "unc_timed_out": unc_timed_out,
         })
+
+        # Reclassify: if constrained AND unconstrained both empty (and unc didn't
+        # time out), the formula itself is unsupported by ASP — not a pipeline failure.
+        if row["status"] == "empty_candidates" and unc_n_cands == 0 and not unc_timed_out:
+            row["status"] = "asp_unsupported"
+            n_asp_unsupported += 1
+
+        # Diagnose remaining empty constrained sets: check whether GT structural
+        # features are all covered by the prediction sets.
+        # If yes → ASP constraint bug (network was right, ASP implementation wrong).
+        # If no  → network error (wrong constraints excluded the true molecule).
+        elif row["status"] == "empty_candidates":
+            reason, missed = diagnose_empty_candidates(record, pred, model_dataset)
+            row["empty_reason"] = reason
+            row["missed_features"] = "; ".join(missed)
+            if reason == "asp_bug":
+                row["status"] = "empty_asp_bug"
+                n_empty_asp_bug += 1
+            else:
+                row["status"] = "empty_network_error"
+                n_empty_network_error += 1
 
         per_sample_rows.append(row)
 
@@ -654,49 +766,73 @@ def main() -> None:
 
     # ── aggregate metrics ─────────────────────────────────────────────────────
     n_eval = len(per_sample_rows)
-    metric_rows = [r for r in per_sample_rows if not r["timed_out"]]
-    n_metric = len(metric_rows)
-    n_with_cands = sum(1 for r in metric_rows if r["num_candidates"] > 0)
-    n_exact = sum(1 for r in metric_rows if r["exact_match"])
 
-    max_tans = np.array([r["max_tanimoto"] for r in metric_rows], dtype=float)
-    spts = np.array([r["size_penalised_tanimoto"] for r in metric_rows], dtype=float)
-    n_cands_arr = np.array([r["num_candidates"] for r in metric_rows], dtype=int)
+    # Set 1: constrained attempts where the network is responsible for the outcome.
+    # Includes empty sets caused by wrong network predictions (empty_network_error).
+    # Excludes ASP-unsupported formulas and empty sets caused by ASP bugs.
+    con_ok_rows = [r for r in per_sample_rows if r["status"] in ("ok", "empty_network_error")]
+    n_con_ok = len(con_ok_rows)
+    con_exact = sum(1 for r in con_ok_rows if r["exact_match"])
+    con_max_tans = np.array([r["max_tanimoto"] for r in con_ok_rows], dtype=float)
+    con_spts = np.array([r["size_penalised_tanimoto"] for r in con_ok_rows], dtype=float)
+    con_n_cands_arr = np.array([r["num_candidates"] for r in con_ok_rows], dtype=int)
 
-    # Unconstrained aggregate metrics (exclude rows where unc solve timed out)
-    unc_metric_rows = [r for r in per_sample_rows if not r["unc_timed_out"] and not r["timed_out"]]
-    n_unc_metric = len(unc_metric_rows)
-    unc_n_with_cands = sum(1 for r in unc_metric_rows if r["unc_num_candidates"] > 0)
-    unc_n_exact = sum(1 for r in unc_metric_rows if r["unc_exact_match"])
-    unc_max_tans = np.array([r["unc_max_tanimoto"] for r in unc_metric_rows], dtype=float)
-    unc_spts = np.array([r["unc_size_penalised_tanimoto"] for r in unc_metric_rows], dtype=float)
-    unc_n_cands_arr = np.array([r["unc_num_candidates"] for r in unc_metric_rows], dtype=int)
+    # Set 2: paired rows where both constrained and unconstrained succeeded
+    # (subset of set 1; used for fair head-to-head comparison).
+    paired_rows = [r for r in con_ok_rows if not r["unc_timed_out"]]
+    n_paired = len(paired_rows)
+    paired_exact = sum(1 for r in paired_rows if r["exact_match"])
+    paired_max_tans = np.array([r["max_tanimoto"] for r in paired_rows], dtype=float)
+    paired_spts = np.array([r["size_penalised_tanimoto"] for r in paired_rows], dtype=float)
+    paired_n_cands_arr = np.array([r["num_candidates"] for r in paired_rows], dtype=int)
+    unc_n_with_cands = sum(1 for r in paired_rows if r["unc_num_candidates"] > 0)
+    unc_exact = sum(1 for r in paired_rows if r["unc_exact_match"])
+    unc_max_tans = np.array([r["unc_max_tanimoto"] for r in paired_rows], dtype=float)
+    unc_spts = np.array([r["unc_size_penalised_tanimoto"] for r in paired_rows], dtype=float)
+    unc_n_cands_arr = np.array([r["unc_num_candidates"] for r in paired_rows], dtype=int)
+
+    # Cases where constrained solved but unconstrained timed out.
+    n_con_ok_unc_timeout = sum(1 for r in con_ok_rows if r["unc_timed_out"])
+    pct_con_ok_unc_timeout = round(100.0 * n_con_ok_unc_timeout / n_con_ok, 2) if n_con_ok else 0.0
+
+    def _con_metrics(rows, max_t, spts_, n_cands_, n_exact_) -> dict:
+        n = len(rows)
+        return {
+            "n_metric": n,
+            "n_exact_match": n_exact_,
+            "pct_exact_match": round(100.0 * n_exact_ / n, 2) if n else 0.0,
+            "mean_max_tanimoto": round(float(np.mean(max_t)), 6) if n else 0.0,
+            "mean_size_penalised_tanimoto": round(float(np.mean(spts_)), 6) if n else 0.0,
+            "mean_num_candidates": round(float(np.mean(n_cands_)), 2) if n else 0.0,
+            "mean_num_candidates_exact_match": round(float(np.sum(n_cands_) / (n_exact_)), 2) if n_exact_ else 0.0,
+            "median_num_candidates": int(np.median(n_cands_)) if n else 0,
+        }
 
     summary = {
         "n_evaluated": n_eval,
-        "n_metric": n_metric,
         "n_skipped": n_skipped,
         "n_failed": n_failed,
         "n_asp_timeout": n_timeout,
         "n_empty_candidates": n_empty,
-        "n_with_candidates": n_with_cands,
-        "n_exact_match": n_exact,
-        "pct_with_candidates": round(100.0 * n_with_cands / n_metric, 2) if n_metric else 0.0,
-        "pct_exact_match": round(100.0 * n_exact / n_metric, 2) if n_metric else 0.0,
-        "mean_max_tanimoto": round(float(np.mean(max_tans)), 6) if n_metric else 0.0,
-        "mean_size_penalised_tanimoto": round(float(np.mean(spts)), 6) if n_metric else 0.0,
-        "mean_num_candidates": round(float(np.mean(n_cands_arr)), 2) if n_metric else 0.0,
-        "median_num_candidates": int(np.median(n_cands_arr)) if n_metric else 0,
+        "n_asp_unsupported": n_asp_unsupported,
+        "n_empty_asp_bug": n_empty_asp_bug,
+        "n_empty_network_error": n_empty_network_error,
+        "n_con_ok_unc_timeout": n_con_ok_unc_timeout,
+        "pct_con_ok_unc_timeout": pct_con_ok_unc_timeout,
+        # All constrained successes (max coverage).
+        "constrained": _con_metrics(con_ok_rows, con_max_tans, con_spts, con_n_cands_arr, con_exact),
+        # Paired subset: both solves succeeded (for head-to-head comparison).
+        "constrained_paired": _con_metrics(paired_rows, paired_max_tans, paired_spts, paired_n_cands_arr, paired_exact),
         "unconstrained": {
-            "n_metric": n_unc_metric,
+            "n_metric": n_paired,
             "n_with_candidates": unc_n_with_cands,
-            "n_exact_match": unc_n_exact,
-            "pct_with_candidates": round(100.0 * unc_n_with_cands / n_unc_metric, 2) if n_unc_metric else 0.0,
-            "pct_exact_match": round(100.0 * unc_n_exact / n_unc_metric, 2) if n_unc_metric else 0.0,
-            "mean_max_tanimoto": round(float(np.mean(unc_max_tans)), 6) if n_unc_metric else 0.0,
-            "mean_size_penalised_tanimoto": round(float(np.mean(unc_spts)), 6) if n_unc_metric else 0.0,
-            "mean_num_candidates": round(float(np.mean(unc_n_cands_arr)), 2) if n_unc_metric else 0.0,
-            "median_num_candidates": int(np.median(unc_n_cands_arr)) if n_unc_metric else 0,
+            "n_exact_match": unc_exact,
+            "pct_with_candidates": round(100.0 * unc_n_with_cands / n_paired, 2) if n_paired else 0.0,
+            "pct_exact_match": round(100.0 * unc_exact / n_paired, 2) if n_paired else 0.0,
+            "mean_max_tanimoto": round(float(np.mean(unc_max_tans)), 6) if n_paired else 0.0,
+            "mean_size_penalised_tanimoto": round(float(np.mean(unc_spts)), 6) if n_paired else 0.0,
+            "mean_num_candidates": round(float(np.mean(unc_n_cands_arr)), 2) if n_paired else 0.0,
+            "median_num_candidates": int(np.median(unc_n_cands_arr)) if n_paired else 0,
         },
         "checkpoint": str(ckpt_path),
         "split_or_file": (
@@ -712,6 +848,8 @@ def main() -> None:
         ),
     }
 
+    con = summary["constrained"]
+    conp = summary["constrained_paired"]
     unc = summary["unconstrained"]
     print("\n=== Molecule-Level Evaluation Summary ===")
     print(f"  Checkpoint            : {ckpt_path}")
@@ -719,29 +857,36 @@ def main() -> None:
         print(f"  Conformal type        : {summary['conformal_type']}")
         print(f"  Conformal thresholds  : {summary['conformal_thresholds_path']}")
     else:
-        print(f"  Manual threshold      : {args.threshold}  (no conformal thresholds)")
-    print(f"  Samples evaluated     : {n_eval}")
-    print(f"  Included in metrics   : {n_metric}  (excludes timeouts)")
-    print(f"  Failed                : {n_failed}")
-    print(f"  Skipped (filtered)    : {n_skipped}")
-    print(f"  ASP timeouts          : {n_timeout}")
-    print(f"  Empty candidate sets  : {n_empty}")
-    print(f"  With ≥1 candidate     : {n_with_cands}  ({summary['pct_with_candidates']:.1f}%)")
-    print(f"  Exact match           : {n_exact}  ({summary['pct_exact_match']:.1f}%)")
-    print(f"  Mean max-Tanimoto     : {summary['mean_max_tanimoto']:.4f}")
-    print(f"  Mean SPT              : {summary['mean_size_penalised_tanimoto']:.4f}")
-    print(f"  Mean num candidates   : {summary['mean_num_candidates']:.1f}")
-    print(f"  Median num candidates : {summary['median_num_candidates']}")
-    print(f"\n--- Unconstrained baseline (same formula space, no structural constraints) ---")
-    print(f"  With ≥1 candidate     : {unc_n_with_cands}  ({unc['pct_with_candidates']:.1f}%)")
-    print(f"  Exact match           : {unc_n_exact}  ({unc['pct_exact_match']:.1f}%)")
-    print(f"  Mean max-Tanimoto     : {unc['mean_max_tanimoto']:.4f}")
-    print(f"  Mean SPT              : {unc['mean_size_penalised_tanimoto']:.4f}")
-    print(f"  Mean num candidates   : {unc['mean_num_candidates']:.1f}")
-    print(f"  Median num candidates : {unc['median_num_candidates']}")
-    if n_metric and n_unc_metric:
-        spt_delta = summary['mean_size_penalised_tanimoto'] - unc['mean_size_penalised_tanimoto']
-        cand_ratio = (summary['mean_num_candidates'] / unc['mean_num_candidates']
+        print(f"  Manual threshold       : {args.threshold}  (no conformal thresholds)")
+    print(f"  Samples evaluated           : {n_eval}")
+    print(f"  Failed                      : {n_failed}")
+    print(f"  Skipped (filtered)          : {n_skipped}")
+    print(f"  ASP timeouts                : {n_timeout}")
+    print(f"  Empty candidate sets        : {n_empty}")
+    print(f"  ASP-unsupported             : {n_asp_unsupported}  (formula unsupported → excluded)")
+    print(f"  Empty — ASP constraint bug  : {n_empty_asp_bug}  (GT covered by pred sets, ASP failed → excluded)")
+    print(f"  Empty — network error       : {n_empty_network_error}  (GT not covered by pred sets → scored 0)")
+    print(f"  Con. solved, unc. timeout   : {n_con_ok_unc_timeout} / {n_con_ok}  ({pct_con_ok_unc_timeout:.1f}%)")
+
+    print(f"\n--- Constrained (all successes, n={n_con_ok}) ---")
+    print(f"  Exact match                 : {con_exact}  ({con['pct_exact_match']:.1f}%)")
+    print(f"  Mean max-Tanimoto           : {con['mean_max_tanimoto']:.4f}")
+    print(f"  Mean SPT                    : {con['mean_size_penalised_tanimoto']:.4f}")
+    print(f"  Mean num candidates         : {con['mean_num_candidates']:.1f}")
+    print(f"  Mean num candidates (exact) : {con['mean_num_candidates_exact_match']:.1f}")
+    print(f"  Median num candidates       : {con['median_num_candidates']}")
+
+    print(f"\n--- Constrained vs Unconstrained (paired, n={n_paired}) ---")
+    print(f"  {'':30s} {'Constrained':>12}  {'Unconstrained':>13}")
+    print(f"  {'Exact match':30s} {paired_exact:>10}  ({conp['pct_exact_match']:4.1f}%)   {unc_exact:>10}  ({unc['pct_exact_match']:4.1f}%)")
+    print(f"  {'Mean max-Tanimoto':30s} {conp['mean_max_tanimoto']:>12.4f}  {unc['mean_max_tanimoto']:>13.4f}")
+    print(f"  {'Mean SPT':30s} {conp['mean_size_penalised_tanimoto']:>12.4f}  {unc['mean_size_penalised_tanimoto']:>13.4f}")
+    print(f"  {'Mean num candidates':30s} {conp['mean_num_candidates']:>12.1f}  {unc['mean_num_candidates']:>13.1f}")
+    print(f"  {'Mean num candidates (exact)':30s} {conp['mean_num_candidates_exact_match']:>12.1f}  {unc['mean_num_candidates']:>13.1f}")
+    print(f"  {'Median num candidates':30s} {conp['median_num_candidates']:>12d}  {unc['median_num_candidates']:>13d}")
+    if n_paired:
+        spt_delta = conp['mean_size_penalised_tanimoto'] - unc['mean_size_penalised_tanimoto']
+        cand_ratio = (conp['mean_num_candidates'] / unc['mean_num_candidates']
                       if unc['mean_num_candidates'] > 0 else float('nan'))
         print(f"\n  SPT delta (constrained - unconstrained): {spt_delta:+.4f}")
         print(f"  Candidate count ratio (con/unc):         {cand_ratio:.3f}")
