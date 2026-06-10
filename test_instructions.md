@@ -1,2 +1,0 @@
-Run tests using `python -m pytest -v`.
-If you add a new constraint in `predicates/definitions.py`, add a check for the constraint in `tests/constraint_defs.py` and make sure it is covered by one of the test molecular formulas in `tests/conftest.py#formulas`.
