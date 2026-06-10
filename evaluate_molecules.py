@@ -47,6 +47,7 @@ import time
 from pathlib import Path
 import numpy as np
 import torch
+from tqdm import tqdm
 
 # ── project root on path ──────────────────────────────────────────────────────
 ROOT = Path(__file__).resolve().parent
@@ -55,10 +56,12 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from config import config
 from data.datasets import dataset_from_schema, RawFeatureDataset
-from model.loader import load_model, load_thresholds
+from model.loader import load_model, load_thresholds, thresholds_path
 from model.predict import predict_single, RecordPrediction
 from predicates.compiler import compile_asp_constraint
+from predicates.interface import PredictionInterface
 from asp.bridge import solve
+from filters import dou_filter, heavy_atom_filter, small_mol_filter, element_type_filter, formula_complexity_filter, formula_complexity_score
 
 try:
     from rdkit import Chem, DataStructs
@@ -86,7 +89,10 @@ def _morgan_fp(smi: str):
     if not _HAS_RDKIT:
         return None
     mol = Chem.MolFromSmiles(smi)
-    return AllChem.GetMorganFingerprintAsBitVect(mol, radius=2, nBits=2048) if mol else None
+    if mol is None:
+        return None
+    gen = AllChem.GetMorganGenerator(radius=2, fpSize=2048)
+    return gen.GetFingerprint(mol)
 
 
 def tanimoto(gt_canon: str, cand_canon: str, gt_fp=None) -> float:
@@ -109,7 +115,7 @@ def size_penalised_tanimoto(max_tan: float, n_candidates: int) -> float:
 
 # ── dataset / record loading ──────────────────────────────────────────────────
 
-def _load_test_records(args: argparse.Namespace) -> list[dict]:
+def _load_test_records(args: argparse.Namespace, filter="medium") -> list[dict]:
     """Return a list of raw record dicts from the requested test source.
 
     Two modes:
@@ -127,8 +133,26 @@ def _load_test_records(args: argparse.Namespace) -> list[dict]:
             data_path, schema_path,
             spectrum_len=config.model.spectrum_length,
         )
-        n = args.limit if args.limit else len(ds)
-        return [ds._load_record(i) for i in range(min(n, len(ds)))]
+        out = []
+        out_len = 0
+        n_skipped = 0
+        for i in range(len(ds)):
+            rec = ds._load_record(i)
+            smiles = rec.get("smiles")
+            # Filter
+            if not formula_complexity_filter(smiles, max_score=13):
+                n_skipped += 1
+                continue
+
+            out.append(rec)
+            out_len += 1
+
+            if args.limit and out_len >= args.limit:
+                break 
+
+        return out
+
+
 
     # --- from split pkl -------------------------------------------------------
     split_pkl = Path(args.split_pkl)
@@ -159,15 +183,44 @@ def _load_test_records(args: argparse.Namespace) -> list[dict]:
     with open(split_pkl, "rb") as f:
         indices: list[int] = pickle.load(f)
 
-    if args.limit:
-        indices = indices[: args.limit]
-
     log.info(f"Loaded {len(indices)} indices from {split_pkl.name}.")
 
-    return [full_dataset._load_record(i) for i in indices]
+    out = []
+    out_len = 0
+    n_skipped = 0
+    for i in indices:
+        rec = full_dataset._load_record(i)
+        smiles = rec.get("smiles")
+        # Filter
+        if not formula_complexity_filter(smiles, max_score=13):
+            n_skipped += 1
+            continue
+
+        out.append(rec)
+        out_len += 1
+
+        if args.limit and out_len >= args.limit:
+            break 
+
+    return out, n_skipped
 
 
 # ── inference pipeline ────────────────────────────────────────────────────────
+
+def _combo_iter(count_ranges: dict[str, tuple[int, int]], max_combos: int | None):
+    """Yield count dicts for all formula combinations, capped at max_combos."""
+    ranges_list = [range(lo, hi + 1) for lo, hi in count_ranges.values()]
+    n_combos = 1
+    for r in ranges_list:
+        n_combos *= len(r)
+    if max_combos is not None and n_combos > max_combos:
+        log.warning(
+            f"Formula combinations ({n_combos}) exceed --max-combos={max_combos}; "
+            "truncating iteration — some candidate SMILES may be missed."
+        )
+    for combo in itertools.islice(itertools.product(*ranges_list), max_combos):
+        yield dict(zip(count_ranges, combo))
+
 
 def run_asp_pipeline(
     pred: RecordPrediction,
@@ -179,31 +232,63 @@ def run_asp_pipeline(
 
     Returns (unique_smiles, any_solve_timed_out).
     """
-    ranges_list = [range(lo, hi + 1) for lo, hi in count_ranges.values()]
-
-    n_combos = 1
-    for r in ranges_list:
-        n_combos *= len(r)
-    if max_combos is not None and n_combos > max_combos:
-        log.warning(
-            f"Formula combinations ({n_combos}) exceed --max-combos={max_combos}; "
-            "truncating iteration — some candidate SMILES may be missed."
-        )
-
-    combo_iter = (
-        dict(zip(count_ranges, combo))
-        for combo in itertools.islice(itertools.product(*ranges_list), max_combos)
-    )
-
     seen: set[str] = set()
     candidates: list[str] = []
     any_timed_out = False
 
-    for count_dict in combo_iter:
+    for count_dict in _combo_iter(count_ranges, max_combos):
         try:
             interface = pred.to_interface(counts=count_dict)
         except Exception as exc:
             log.debug(f"Invalid interface for counts {count_dict}: {exc}")
+            continue
+
+        asp_constraints, atom_counts = compile_asp_constraint(interface)
+
+        log.info(f"Solving for molecule C{atom_counts['num_carbons']}H{atom_counts['num_hydrogens']}O{atom_counts['num_oxygens']}N{atom_counts['num_nitrogens']}P{atom_counts['num_phosphorus']}S{atom_counts['num_sulfurs']}")
+
+        try:
+            cands, _, timed_out = solve(
+                asp_constraints, atom_counts,
+                output_list_of_smiles=True,
+                timeout=asp_timeout,
+            )
+        except Exception as exc:
+            log.debug(f"ASP solve error for {count_dict}: {exc}")
+            continue
+
+        if timed_out:
+            any_timed_out = True
+        for smi in cands:
+            if smi not in seen:
+                seen.add(smi)
+                candidates.append(smi)
+
+    return candidates, any_timed_out
+
+
+def run_asp_pipeline_unconstrained(
+    count_ranges: dict[str, tuple[int, int]],
+    asp_timeout: int,
+    max_combos: int | None,
+) -> tuple[list[str], bool]:
+    """Same formula iteration as run_asp_pipeline but with no structural constraints.
+
+    Builds a PredictionInterface containing only atom counts (no binary/categorical
+    entries, no continuous ranges), giving the baseline candidate set for a given
+    formula space.
+
+    Returns (unique_smiles, any_solve_timed_out).
+    """
+    seen: set[str] = set()
+    candidates: list[str] = []
+    any_timed_out = False
+
+    for count_dict in _combo_iter(count_ranges, max_combos):
+        try:
+            interface = PredictionInterface.model_validate(count_dict)
+        except Exception as exc:
+            log.debug(f"Invalid unconstrained interface for counts {count_dict}: {exc}")
             continue
 
         asp_constraints, atom_counts = compile_asp_constraint(interface)
@@ -215,7 +300,7 @@ def run_asp_pipeline(
                 timeout=asp_timeout,
             )
         except Exception as exc:
-            log.debug(f"ASP solve error for {count_dict}: {exc}")
+            log.debug(f"ASP unconstrained solve error for {count_dict}: {exc}")
             continue
 
         if timed_out:
@@ -358,6 +443,22 @@ def parse_args() -> argparse.Namespace:
         "calls significantly at the very high probability of not finding the true "
         "molecule."
     )
+    p.add_argument(
+        "--use-gt-counts", action="store_true",
+        help="Use the ground truth molecular formulae for atom counts instead of the "
+        "network's predictions. This is useful for evaluating the rest of the pipeline "
+        "and circumventing the combinatorial explosion issue with predicted formulae."
+    )
+    p.add_argument(
+        "--filter", default="medium",
+        help="The filter preset to use when filtering out molecules. Ultralight, light, medium, or heavy."
+    )
+    p.add_argument(
+        "--thresholds-type", default="joint", choices=["joint", "marginal"],
+        help="Which conformal thresholds to load: 'joint' (default) uses the jointly-calibrated "
+             "thresholds (.joint.thresholds.pt); 'marginal' uses the per-feature thresholds "
+             "(.thresholds.pt).",
+    )
     return p.parse_args()
 
 
@@ -385,9 +486,10 @@ def main() -> None:
         device = torch.device(args.device)
         model = model.to(device)
 
-    thresholds = load_thresholds(ckpt_path)
+    use_joint = args.thresholds_type == "joint"
+    thresholds = load_thresholds(ckpt_path, alpha=config.conformal.alpha, joint=use_joint)
     if thresholds is not None:
-        log.info(f"Conformal thresholds loaded (alpha={config.conformal.alpha}).")
+        log.info(f"Conformal thresholds loaded (alpha={config.conformal.alpha}, type={args.thresholds_type}).")
     else:
         log.info(
             f"No conformal thresholds found; "
@@ -396,7 +498,7 @@ def main() -> None:
 
     # ── test records ─────────────────────────────────────────────────────────
     log.info("Loading test records ...")
-    records: list[dict] = _load_test_records(args)
+    records, n_skipped = _load_test_records(args, filter=args.filter)
     log.info(f"Evaluating {len(records)} samples.")
 
     # ── per-sample loop ───────────────────────────────────────────────────────
@@ -404,11 +506,11 @@ def main() -> None:
     n_failed = 0
     n_timeout = 0
     n_empty = 0
-    n_exact = 0
 
-    for sample_idx, record in enumerate(records):
+    for sample_idx, record in tqdm(enumerate(records)):
         gt_smiles_raw: str | None = record.get("smiles")
         spectrum_str: str = record.get("spectrum", "")
+        smiles = record.get("smiles")
 
         row: dict = {
             "sample_idx": sample_idx,
@@ -420,6 +522,11 @@ def main() -> None:
             "timed_out": False,
             "status": "ok",
             "candidates": "",
+            "unc_num_candidates": 0,
+            "unc_max_tanimoto": 0.0,
+            "unc_size_penalised_tanimoto": 0.0,
+            "unc_exact_match": False,
+            "unc_timed_out": False,
         }
 
         # Validate ground-truth SMILES (needed for metrics, not inference).
@@ -459,6 +566,14 @@ def main() -> None:
         if args.use_median_counts:
             count_ranges = {k: ((lo + hi) // 2, (lo + hi) // 2) for k, (lo, hi) in count_ranges.items()}
 
+        if args.use_gt_counts:
+            count_ranges["num_carbons"] = tuple([record.get("structural_features")["element_C"]] * 2)
+            count_ranges["num_hydrogens"] = tuple([record.get("structural_features")["element_H"]] * 2)
+            count_ranges["num_oxygens"] = tuple([record.get("structural_features")["element_O"]] * 2)
+            count_ranges["num_nitrogens"] = tuple([record.get("structural_features")["element_N"]] * 2)
+            count_ranges["num_phosphorus"] = tuple([record.get("structural_features")["element_P"]] * 2)
+            count_ranges["num_sulfurs"] = tuple([record.get("structural_features")["element_S"]] * 2)
+
         # ── ASP solving ─────────────────────────────────
         try:
             t0 = time.monotonic()
@@ -489,8 +604,6 @@ def main() -> None:
 
         # ── metric computation (GT SMILES used here) ────────
         max_tan, spt, exact = evaluate_candidates(gt_smiles_raw, candidates)
-        if exact:
-            n_exact += 1
 
         row.update({
             "max_tanimoto": round(max_tan, 6),
@@ -502,6 +615,28 @@ def main() -> None:
         if row["status"] not in ("asp_timeout", "empty_candidates") and n_cands > 0:
             row["status"] = "ok"
 
+        # ── unconstrained ASP solve (same formula space, no structural constraints) ──
+        try:
+            unc_candidates, unc_timed_out = run_asp_pipeline_unconstrained(
+                count_ranges,
+                asp_timeout=args.asp_timeout,
+                max_combos=args.max_combos,
+            )
+        except Exception as exc:
+            log.debug(f"[{sample_idx}] Unconstrained ASP error: {exc}")
+            unc_candidates, unc_timed_out = [], False
+
+        unc_n_cands = len(unc_candidates)
+        unc_max_tan, unc_spt, unc_exact = evaluate_candidates(gt_smiles_raw, unc_candidates)
+
+        row.update({
+            "unc_num_candidates": unc_n_cands,
+            "unc_max_tanimoto": round(unc_max_tan, 6),
+            "unc_size_penalised_tanimoto": round(unc_spt, 6),
+            "unc_exact_match": unc_exact,
+            "unc_timed_out": unc_timed_out,
+        })
+
         per_sample_rows.append(row)
 
         tag = (
@@ -511,32 +646,58 @@ def main() -> None:
             "OK   "
         )
         log.info(
-            f"[{sample_idx:5d}] {tag} | cands={n_cands:5d} | "
+            f"[{sample_idx:5d}] {tag} | cands={n_cands:5d} (unc={unc_n_cands:5d}) | "
             f"tan={max_tan:.3f} | spt={spt:.4f} | "
-            f"t={elapsed:.1f}s | {gt_smiles_raw[:55]}"
+            f"unc_tan={unc_max_tan:.3f} | unc_spt={unc_spt:.4f} | "
+            f"t={elapsed:.1f}s | {gt_smiles_raw[:55]} | complexity={formula_complexity_score(smiles)}"
         )
 
     # ── aggregate metrics ─────────────────────────────────────────────────────
     n_eval = len(per_sample_rows)
-    n_with_cands = sum(1 for r in per_sample_rows if r["num_candidates"] > 0)
+    metric_rows = [r for r in per_sample_rows if not r["timed_out"]]
+    n_metric = len(metric_rows)
+    n_with_cands = sum(1 for r in metric_rows if r["num_candidates"] > 0)
+    n_exact = sum(1 for r in metric_rows if r["exact_match"])
 
-    max_tans = np.array([r["max_tanimoto"] for r in per_sample_rows], dtype=float)
-    spts = np.array([r["size_penalised_tanimoto"] for r in per_sample_rows], dtype=float)
-    n_cands_arr = np.array([r["num_candidates"] for r in per_sample_rows], dtype=int)
+    max_tans = np.array([r["max_tanimoto"] for r in metric_rows], dtype=float)
+    spts = np.array([r["size_penalised_tanimoto"] for r in metric_rows], dtype=float)
+    n_cands_arr = np.array([r["num_candidates"] for r in metric_rows], dtype=int)
+
+    # Unconstrained aggregate metrics (exclude rows where unc solve timed out)
+    unc_metric_rows = [r for r in per_sample_rows if not r["unc_timed_out"] and not r["timed_out"]]
+    n_unc_metric = len(unc_metric_rows)
+    unc_n_with_cands = sum(1 for r in unc_metric_rows if r["unc_num_candidates"] > 0)
+    unc_n_exact = sum(1 for r in unc_metric_rows if r["unc_exact_match"])
+    unc_max_tans = np.array([r["unc_max_tanimoto"] for r in unc_metric_rows], dtype=float)
+    unc_spts = np.array([r["unc_size_penalised_tanimoto"] for r in unc_metric_rows], dtype=float)
+    unc_n_cands_arr = np.array([r["unc_num_candidates"] for r in unc_metric_rows], dtype=int)
 
     summary = {
         "n_evaluated": n_eval,
+        "n_metric": n_metric,
+        "n_skipped": n_skipped,
         "n_failed": n_failed,
         "n_asp_timeout": n_timeout,
         "n_empty_candidates": n_empty,
         "n_with_candidates": n_with_cands,
         "n_exact_match": n_exact,
-        "pct_with_candidates": round(100.0 * n_with_cands / n_eval, 2) if n_eval else 0.0,
-        "pct_exact_match": round(100.0 * n_exact / n_eval, 2) if n_eval else 0.0,
-        "mean_max_tanimoto": round(float(np.mean(max_tans)), 6) if n_eval else 0.0,
-        "mean_size_penalised_tanimoto": round(float(np.mean(spts)), 6) if n_eval else 0.0,
-        "mean_num_candidates": round(float(np.mean(n_cands_arr)), 2) if n_eval else 0.0,
-        "median_num_candidates": int(np.median(n_cands_arr)) if n_eval else 0,
+        "pct_with_candidates": round(100.0 * n_with_cands / n_metric, 2) if n_metric else 0.0,
+        "pct_exact_match": round(100.0 * n_exact / n_metric, 2) if n_metric else 0.0,
+        "mean_max_tanimoto": round(float(np.mean(max_tans)), 6) if n_metric else 0.0,
+        "mean_size_penalised_tanimoto": round(float(np.mean(spts)), 6) if n_metric else 0.0,
+        "mean_num_candidates": round(float(np.mean(n_cands_arr)), 2) if n_metric else 0.0,
+        "median_num_candidates": int(np.median(n_cands_arr)) if n_metric else 0,
+        "unconstrained": {
+            "n_metric": n_unc_metric,
+            "n_with_candidates": unc_n_with_cands,
+            "n_exact_match": unc_n_exact,
+            "pct_with_candidates": round(100.0 * unc_n_with_cands / n_unc_metric, 2) if n_unc_metric else 0.0,
+            "pct_exact_match": round(100.0 * unc_n_exact / n_unc_metric, 2) if n_unc_metric else 0.0,
+            "mean_max_tanimoto": round(float(np.mean(unc_max_tans)), 6) if n_unc_metric else 0.0,
+            "mean_size_penalised_tanimoto": round(float(np.mean(unc_spts)), 6) if n_unc_metric else 0.0,
+            "mean_num_candidates": round(float(np.mean(unc_n_cands_arr)), 2) if n_unc_metric else 0.0,
+            "median_num_candidates": int(np.median(unc_n_cands_arr)) if n_unc_metric else 0,
+        },
         "checkpoint": str(ckpt_path),
         "split_or_file": (
             args.test_set if args.test_set else args.split_pkl
@@ -544,11 +705,25 @@ def main() -> None:
         "asp_timeout_s": args.asp_timeout,
         "manual_threshold": args.threshold,
         "conformal": thresholds is not None,
+        "conformal_type": args.thresholds_type if thresholds is not None else None,
+        "conformal_thresholds_path": (
+            str(thresholds_path(ckpt_path, alpha=config.conformal.alpha, joint=use_joint))
+            if thresholds is not None else None
+        ),
     }
 
+    unc = summary["unconstrained"]
     print("\n=== Molecule-Level Evaluation Summary ===")
+    print(f"  Checkpoint            : {ckpt_path}")
+    if thresholds is not None:
+        print(f"  Conformal type        : {summary['conformal_type']}")
+        print(f"  Conformal thresholds  : {summary['conformal_thresholds_path']}")
+    else:
+        print(f"  Manual threshold      : {args.threshold}  (no conformal thresholds)")
     print(f"  Samples evaluated     : {n_eval}")
-    print(f"  Failed / skipped      : {n_failed}")
+    print(f"  Included in metrics   : {n_metric}  (excludes timeouts)")
+    print(f"  Failed                : {n_failed}")
+    print(f"  Skipped (filtered)    : {n_skipped}")
     print(f"  ASP timeouts          : {n_timeout}")
     print(f"  Empty candidate sets  : {n_empty}")
     print(f"  With ≥1 candidate     : {n_with_cands}  ({summary['pct_with_candidates']:.1f}%)")
@@ -557,6 +732,19 @@ def main() -> None:
     print(f"  Mean SPT              : {summary['mean_size_penalised_tanimoto']:.4f}")
     print(f"  Mean num candidates   : {summary['mean_num_candidates']:.1f}")
     print(f"  Median num candidates : {summary['median_num_candidates']}")
+    print(f"\n--- Unconstrained baseline (same formula space, no structural constraints) ---")
+    print(f"  With ≥1 candidate     : {unc_n_with_cands}  ({unc['pct_with_candidates']:.1f}%)")
+    print(f"  Exact match           : {unc_n_exact}  ({unc['pct_exact_match']:.1f}%)")
+    print(f"  Mean max-Tanimoto     : {unc['mean_max_tanimoto']:.4f}")
+    print(f"  Mean SPT              : {unc['mean_size_penalised_tanimoto']:.4f}")
+    print(f"  Mean num candidates   : {unc['mean_num_candidates']:.1f}")
+    print(f"  Median num candidates : {unc['median_num_candidates']}")
+    if n_metric and n_unc_metric:
+        spt_delta = summary['mean_size_penalised_tanimoto'] - unc['mean_size_penalised_tanimoto']
+        cand_ratio = (summary['mean_num_candidates'] / unc['mean_num_candidates']
+                      if unc['mean_num_candidates'] > 0 else float('nan'))
+        print(f"\n  SPT delta (constrained - unconstrained): {spt_delta:+.4f}")
+        print(f"  Candidate count ratio (con/unc):         {cand_ratio:.3f}")
 
     _save_csv(per_sample_rows, out_dir / "molecule_evaluation_test.csv")
     _save_json(summary, out_dir / "molecule_evaluation_summary.json")

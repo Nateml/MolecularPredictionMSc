@@ -67,6 +67,11 @@ def parse_args() -> argparse.Namespace:
         "--full-dataset", default=None,
         help="Path to the full dataset JSON. Required when --calibration-pkl is used.",
     )
+    p.add_argument(
+        "--joint", action="store_true",
+        help="Apply joint calibration: scale all thresholds by a single factor T so that "
+             "the joint event (all features covered simultaneously) has marginal coverage >= 1-alpha.",
+    )
     return p.parse_args()
 
 
@@ -166,12 +171,16 @@ def main() -> None:
                 dataset._cont_std.tolist(),
             )
 
-    print(f"Calibrating on {len(calibration_ds)} samples with alpha={args.alpha}...")
+    mode = "joint" if args.joint else "marginal"
+    print(f"Calibrating on {len(calibration_ds)} samples with alpha={args.alpha} ({mode})...")
     calib_loader = DataLoader(calibration_ds, batch_size=config.training.batch_size, shuffle=False)
     num_q = getattr(model, "num_quantiles", 5)
-    thresholds = calibrate_model(model, calib_loader, alpha=args.alpha, quantile_high_idx=num_q - 1)
+    thresholds = calibrate_model(
+        model, calib_loader, alpha=args.alpha,
+        quantile_high_idx=num_q - 1, joint=args.joint,
+    )
 
-    out_path = thresholds_path(checkpoint_path)
+    out_path = thresholds_path(checkpoint_path, alpha=args.alpha, joint=args.joint)
     torch.save(thresholds, out_path)
     print(f"Conformal thresholds saved to {out_path}")
 
