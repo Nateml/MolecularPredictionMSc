@@ -235,3 +235,13 @@ asp-bridge-diagnosis-*.md
 eval_results.csv
 eval_results/
 *.idx
+
+# Generated outputs / thesis
+results/
+main.tex
+*.pdf
+*:Zone.Identifier
+
+# Large data / model artifacts
+models/
+data/splits/
