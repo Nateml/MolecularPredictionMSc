@@ -222,8 +222,11 @@ def _grounding_worker(
     result_queue.put(([_model_to_smiles(m) for m in models_raw], models_raw))
 
 
-def solve(asp_code: list[str], atom_counts: dict, output_list_of_smiles: bool = False, debug=False, timeout: int = 0, canonicalize: bool = False) -> tuple[list | str, int, bool]:
+def solve(asp_code: list[str], atom_counts: dict, output_list_of_smiles: bool = False, debug=False, timeout: int = 0, canonicalize: bool = False, suppress_timeout_warning: bool = False, dedup=False) -> tuple[list | str, int, bool]:
     """Run ASP solver and return (SMILES list or formatted string, candidate count, timed_out)."""
+
+    if dedup: assert canonicalize, "Dedup cannot be set to True without also setting canonicalize to True"
+
     dou_num = _dou_numerator(atom_counts)
     if dou_num < 0 or dou_num % 2 != 0 or dou_num / 2 < _min_required_dou(asp_code):
         return ([] if output_list_of_smiles else "", 0, False)
@@ -264,7 +267,8 @@ def solve(asp_code: list[str], atom_counts: dict, output_list_of_smiles: bool = 
     if timed_out:
         proc.terminate()
         proc.join()
-        print(f"Warning: ASP grounding/solving timed out after {timeout}s; results may be incomplete.", file=sys.stderr)
+        if not suppress_timeout_warning:
+            print(f"Warning: ASP grounding/solving timed out after {timeout}s; results may be incomplete.", file=sys.stderr)
         return ([] if output_list_of_smiles else ""), 0, True
     visualisations, models_raw = result_queue.get()
     model_count = len(models_raw)
@@ -276,6 +280,11 @@ def solve(asp_code: list[str], atom_counts: dict, output_list_of_smiles: bool = 
             for smi in visualisations:
                 mol = Chem.MolFromSmiles(smi)
                 canonical.append(Chem.MolToSmiles(mol) if mol else smi)
+
+            if dedup:
+                canonical = list(set(canonical))
+                model_count = len(canonical)
+
             return canonical, model_count, timed_out
         return visualisations, model_count, timed_out
 
@@ -306,6 +315,7 @@ def main():
     parser.add_argument('--show-constraints', action='store_true', help="Whether or not to print the additional ASP code generated")
     parser.add_argument('--canonicalize', action='store_true', help='Canonicalize output SMILES via RDKit')
     parser.add_argument('--return-list', action='store_true', help='Return a raw list of candidate molecules')
+    parser.add_argument('--dedup', action='store_true', help='Deduplicates the returned canonical SMILES')
     args = parser.parse_args()
 
     # If all atom counts are zero, use a default formula
@@ -343,7 +353,7 @@ def main():
         print(f"ASP constraints:\n{chr(10).join(asp_constraints)}\n")
         print(f"Atom counts: {atom_counts}\n")
 
-    output, num_candidates, _ = solve(asp_constraints, atom_counts, output_list_of_smiles=args.return_list, debug=True, canonicalize=args.canonicalize)
+    output, num_candidates, _ = solve(asp_constraints, atom_counts, output_list_of_smiles=args.return_list, debug=True, canonicalize=args.canonicalize, dedup=args.dedup)
 
     print(f"Found {num_candidates} candidates.\n")
     print(output)

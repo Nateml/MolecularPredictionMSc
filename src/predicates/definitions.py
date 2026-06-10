@@ -193,41 +193,86 @@ HELPER_PREDICATES: Dict[str, str] = {
     "ring_double_bond_count": """
         ring_double_bond_count(C, N) :-
             cycle_start(_, C),
-            N = #count { I : atom_in_ring(I, C), multi_bond(I, 2) }.
+            N = #count {
+                0, I : atom_in_ring(I, C), multi_bond(I, 2) ;
+                1, S : cycle_start(S, C), cycle_end(E, C), ring_closure_dbl(S, E)
+            }.
     """,
 
-    # True when ring C has two backbone-adjacent atoms both with multi_bond (cumulene).
+    # True when ring C has two adjacent double bonds (cumulene pattern).
     # Aromatic rings have alternating single/double bonds; cumulenes have consecutive ones.
+    # Uses atom_in_ring for membership so backward-through-root rings are handled correctly.
     "consecutive_ring_doubles": """
+        % Parent→child consecutive: bond P→I double and bond I→J double.
         consecutive_ring_doubles(C) :-
-            cycle_start(S, C),
-            cycle_end(E, C),
             multi_bond(I, _),
             multi_bond(J, _),
             parent(I, _, J),
-            S < J, J <= E,
-            S < I, I <= E.
+            atom_in_ring(I, C),
+            atom_in_ring(J, C).
+        % Sibling consecutive: parent P has two children I, J both with double bonds (P has two double bonds).
+        consecutive_ring_doubles(C) :-
+            parent(P, _, I),
+            parent(P, _, J),
+            I != J,
+            multi_bond(I, _),
+            multi_bond(J, _),
+            atom_in_ring(P, C),
+            atom_in_ring(I, C),
+            atom_in_ring(J, C).
+        % Ring-closure double adjacent to backbone double FROM cycle_start to child.
+        consecutive_ring_doubles(C) :-
+            ring_closure_dbl(S, _),
+            cycle_start(S, C),
+            parent(S, _, J),
+            multi_bond(J, _),
+            atom_in_ring(J, C).
+        % Ring-closure double adjacent to backbone double INTO cycle_start from parent.
+        consecutive_ring_doubles(C) :-
+            ring_closure_dbl(S, _),
+            cycle_start(S, C),
+            multi_bond(S, _).
+        % Ring-closure double adjacent to backbone double INTO cycle_end from parent.
+        consecutive_ring_doubles(C) :-
+            ring_closure_dbl(_, E),
+            cycle_end(E, C),
+            multi_bond(E, _).
+        % Ring-closure double adjacent to backbone double FROM cycle_end to child.
+        consecutive_ring_doubles(C) :-
+            ring_closure_dbl(_, E),
+            cycle_end(E, C),
+            parent(E, _, K),
+            multi_bond(K, _),
+            atom_in_ring(K, C).
     """,
 
     # A ring cycle is aromatic in Kekulé representation if:
     #   6-membered ring with 3 alternating double bonds (benzene-type), or
     #   5-membered ring with 2 double bonds + one heteroatom (furan/pyrrole/thiophene).
+    # Ring size is counted from atom_in_ring membership (not DFS span) so fused rings work.
     # Consecutive double bonds (cumulenes) are excluded — they are never aromatic.
+    # For 5-membered rings: also exclude rings fused to a 3-membered ring — strained
+    # bicyclics (e.g. C=C-S fused with a cyclopropane-like ring) are not aromatic.
     "aromatic_ring_cycle": """
+        % Ring C shares a member with a small (3- or 4-membered) ring — strained,
+        % disqualifies 5-membered aromaticity.
+        fused_with_small_ring(C) :-
+            atom_in_ring(I, C),
+            atom_in_ring(I, C2),
+            C != C2,
+            SZ = #count { K : atom_in_ring(K, C2) },
+            SZ <= 4.
         aromatic_ring_cycle(C) :-
-            cycle_start(S, C),
-            cycle_end(E, C),
-            E - S = 5,
             ring_double_bond_count(C, 3),
+            #count { I : atom_in_ring(I, C) } = 6,
             not consecutive_ring_doubles(C).
         aromatic_ring_cycle(C) :-
-            cycle_start(S, C),
-            cycle_end(E, C),
-            E - S = 4,
             ring_double_bond_count(C, 2),
-            ring_atom(I), symbol(I, EL), EL != "C", EL != "H",
-            S <= I, I <= E,
-            not consecutive_ring_doubles(C).
+            #count { K : atom_in_ring(K, C) } = 5,
+            atom_in_ring(H, C), symbol(H, EL), EL != "C", EL != "H",
+            #count { J : atom_in_ring(J, C), double_bond_between(H, J) } = 0,
+            not consecutive_ring_doubles(C),
+            not fused_with_small_ring(C).
     """,
 
     "aromatic_atom": """
@@ -720,13 +765,12 @@ HELPER_PREDICATES: Dict[str, str] = {
 ##TODO: future elements need adding
     "exact_mass_da": """
         exact_mass_da(M) :-
-            M = 12 * c + 1 * h + 14 * n + 16 * o.
+            M = 12 * c + 1 * h + 14 * n + 16 * o + 31 * p + 32 * s.
     """,
 
-    ##TODO: currently only C/H/N/O are exposed; add P/S/halogens/etc when available.
     "molecular_weight_da": """
         molecular_weight_da(M) :-
-            M = 12 * c + 1 * h + 14 * n + 16 * o.
+            M = 12 * c + 1 * h + 14 * n + 16 * o + 31 * p + 32 * s.
     """,
 
     # smiles.lp N is always neutral valence-3; every N atom contributes total
@@ -3294,7 +3338,6 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
                 same_ring(I, J).
         """,
         "domain": {0, 1},
-        "unsupported": True,
     },
 
     ##############################
@@ -3303,11 +3346,9 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
     162: {
         "predicate": "has_aromatic_atom",
         "definition": """
-            % Aromatic: approximated as any atom in a ring span
-            has_aromatic_atom :- atom_in_ring(_).
+            has_aromatic_atom :- aromatic_atom(_).
         """,
         "domain": {0, 1},
-        "unsupported": True,
     },
 
     125: {
@@ -3319,20 +3360,18 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
                 N > 1.
         """,
         "domain": {0, 1},
-        "unsupported": True,
     },
 
     65: {
         "predicate": "has_aromatic_c_n",
         "definition": """
-            % c:n - aromatic C bonded to aromatic N (approximated as ring bond C-N)
+            % c:n - aromatic C bonded to aromatic N
             has_aromatic_c_n :-
-                symbol(I, "C"),
-                symbol(J, "N"),
-                approx_ring_bond(I, J).
+                aromatic_atom(I), symbol(I, "C"),
+                aromatic_atom(J), symbol(J, "N"),
+                any_bond_between(I, J).
         """,
         "domain": {0, 1},
-        "unsupported": True,
     },
 
     ##############################
@@ -3350,7 +3389,6 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
                 I != K.
         """,
         "domain": {0, 1},
-        "unsupported": True,
     },
 
     113: {
@@ -3364,7 +3402,6 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
                 atom_in_ring(J).
         """,
         "domain": {0, 1},
-        "unsupported": True,
     },
 
     135: {
@@ -3378,7 +3415,6 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
                 atom_in_ring(J).
         """,
         "domain": {0, 1},
-        "unsupported": True,
     },
 
     87: {
@@ -3512,16 +3548,18 @@ MACCS_DEFINITIONS: Dict[int, ASPPredicate] = {
     144: {
         "predicate": "has_nonaro_aro_aro_nonaro",
         "definition": """
-            % Anot%A%Anot%A: non-aromatic-aromatic-aromatic-non-aromatic
-            % Approximated as non-ring bond, ring bond, non-ring bond (same as 150)
+            % Anot%A%Anot%A: non-aromatic atom bonded to aromatic, aromatic bonded to non-aromatic
             has_nonaro_aro_aro_nonaro :-
-                approx_nonring_bond(A, B),
-                approx_ring_bond(B, C),
-                approx_nonring_bond(C, D),
+                any_bond_between(A, B),
+                not aromatic_atom(A),
+                aromatic_atom(B),
+                aromatic_atom(C),
+                any_bond_between(B, C),
+                any_bond_between(C, D),
+                not aromatic_atom(D),
                 A != C, B != D, A != D.
         """,
         "domain": {0, 1},
-        "unsupported": True,
     },
 
 }
