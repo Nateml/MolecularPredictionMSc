@@ -43,11 +43,13 @@ import json
 import logging
 import math
 import pickle
+import random
 import sys
 import time
 from pathlib import Path
 import numpy as np
 import torch
+import torch.nn.functional as F
 from tqdm import tqdm
 
 # ── project root on path ──────────────────────────────────────────────────────
@@ -58,7 +60,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from config import config
 from data.datasets import dataset_from_schema, RawFeatureDataset
 from model.loader import load_model, load_thresholds, thresholds_path
-from model.predict import predict_single, RecordPrediction
+from model.predict import predict_single, RecordPrediction, RawModelOutputs
 from predicates.compiler import compile_asp_constraint
 from predicates.interface import PredictionInterface
 from predicates.definitions import MACCS_DEFINITIONS, FEATURE_VECTOR_DEFINITIONS
@@ -105,9 +107,14 @@ def diagnose_empty_candidates(
     """Determine why constrained ASP returned no candidates.
 
     Checks whether every GT structural feature is inside the corresponding
-    prediction set.  If all are covered, the network's constraints are
+    prediction set or range.  If all are covered, the network's constraints are
     consistent with the truth and the empty set is an ASP implementation bug.
     If any are missed, the network predicted wrong constraints.
+
+    Checks three constraint types:
+      - MACCS key binary predictions (pred_set must contain GT bit value)
+      - Feature-vector categorical predictions (GT bin must match predicted bin)
+      - Continuous range predictions (GT value must lie within [lo, hi])
 
     Returns:
         ("asp_bug", [])                  — all GT features covered
@@ -157,6 +164,16 @@ def diagnose_empty_candidates(
                     f"{feat_name}(gt_bin={gt_bin},pred_bin={pred_bin},raw={raw})"
                 )
 
+    for feat_name, (lo, hi) in pred.continuous_ranges.items():
+        raw = gt_structural.get(feat_name)
+        if raw is None:
+            continue
+        val = float(raw)
+        if val < lo or val > hi:
+            missed.append(
+                f"{feat_name}(gt={val:.4f},range=[{lo:.4f},{hi:.4f}])"
+            )
+
     return ("network_error", missed) if missed else ("asp_bug", [])
 
 
@@ -182,12 +199,125 @@ def tanimoto(gt_canon: str, cand_canon: str, gt_fp=None) -> float:
     return float(DataStructs.TanimotoSimilarity(fp_a, fp_b))
 
 
-def size_penalised_tanimoto(max_tan: float, n_candidates: int) -> float:
-    """SPT(M) = max_tanimoto / log(1 + |M|).  Returns 0.0 when |M| == 0."""
+def _spt_log(max_tan: float, n_candidates: int) -> float:
+    """Archived log-based SPT: max_tanimoto / log(1 + |M|). Returns 0.0 when |M| == 0."""
     if n_candidates == 0:
         return 0.0
     return max_tan / math.log(1.0 + n_candidates)
 
+
+def size_penalised_tanimoto(max_tan: float, n_candidates: int, beta: float = 0.5) -> float:
+    """SPT_β(M) = max_tanimoto / |M|^β.
+
+    β=0 → pure max_tanimoto (no size penalty).
+    β=1 → linear penalty.
+    β=0.5 (default) → square-root penalty.
+    |M|=1 → no penalty regardless of β (singleton is the best possible outcome).
+    Returns 0.0 when |M| == 0 (max_tanimoto is already 0 in that case).
+    """
+    if n_candidates == 0:
+        return 0.0
+    return max_tan / n_candidates ** beta
+
+def expected_utility(max_tan: float, n_candidates: int, lam: float) -> float:
+    """U_λ(M) = max_tanimoto(M) - λ × |M|.
+
+    Reward is the maximum Tanimoto similarity to the ground truth over all candidates.
+    λ is the cost per candidate relative to the value of a perfect identification.
+    λ=0 → pure max_tanimoto; larger λ → stronger penalty for large sets.
+    """
+    return max_tan - lam * n_candidates
+
+
+def score_molecule(smiles: str, raw: RawModelOutputs) -> float:
+    mol = Chem.MolFromSmiles(smiles)
+    maccs = MACCSkeys.GenMACCSKeys(mol)
+
+    logits = torch.tensor(raw.binary)
+    log_p = F.logsigmoid(logits)
+    log_1mp = F.logsigmoid(-logits)
+
+    score = 0.0
+    for j in MACCS_DEFINITIONS:
+        if j < len(raw.binary):
+            score += log_p[j].item() if maccs[j] else log_1mp[j].item()
+
+    return score
+
+
+def _best_candidate_rank(gt_smiles: str, sorted_candidates: list[str]) -> tuple[int, int]:
+    """Return (rank, N) of the highest-tanimoto candidate in sorted_candidates.
+
+    rank is 1-indexed; 0 means no valid candidate found. N = len(sorted_candidates).
+    """
+    N = len(sorted_candidates)
+    if N == 0:
+        return 0, 0
+    gt_canon = canonical(gt_smiles)
+    if gt_canon is None:
+        return 0, N
+    gt_canon_ns = canonical_no_stereo(gt_smiles)
+    gt_fp = _morgan_fp(gt_canon)
+
+    best_tan = -1.0
+    best_rank = 0
+    for rank, cand in enumerate(sorted_candidates, start=1):
+        cand_canon = canonical(cand)
+        if cand_canon is None:
+            continue
+        if canonical_no_stereo(cand) == gt_canon_ns:
+            tan = 1.0
+        else:
+            tan = tanimoto(gt_canon, cand_canon, gt_fp=gt_fp)
+        if tan > best_tan:
+            best_tan = tan
+            best_rank = rank
+
+    return best_rank, N
+
+
+def reciprocal_rank(gt_smiles: str, sorted_candidates: list[str]) -> float:
+    """1 / rank of the highest-tanimoto candidate. Returns 0.0 when empty."""
+    best_rank, _ = _best_candidate_rank(gt_smiles, sorted_candidates)
+    return 1.0 / best_rank if best_rank > 0 else 0.0
+
+
+def _exact_match_rank(gt_smiles: str, candidates: list[str]) -> tuple[int, int]:
+    """Return (rank, N) of the exact-match candidate (canonical no-stereo) in candidates.
+
+    rank is 1-indexed; 0 means exact match not in list. N = len(candidates).
+    """
+    N = len(candidates)
+    if N == 0:
+        return 0, 0
+    gt_canon_ns = canonical_no_stereo(gt_smiles)
+    if gt_canon_ns is None:
+        return 0, N
+
+    match = 0, N
+    for rank, cand in enumerate(candidates, start=1):
+        if canonical_no_stereo(cand) == gt_canon_ns:
+            if match[0] != 0:
+                print("Multiple exact matches found!")
+            match = (rank, N)
+    return match
+
+
+def rank_percentile(gt_smiles: str, candidates: list[str]) -> float:
+    """1 - (rank - 1) / N of the best candidate (exact match if present, else highest Tanimoto).
+
+    1.0 = best candidate at top, ~0.5 = random baseline, 0.0 = best candidate at bottom.
+    Returns 0.0 when the candidate list is empty or no valid candidate found.
+    """
+    N = len(candidates)
+    if N == 0:
+        return 0.0
+    rank, N = _exact_match_rank(gt_smiles, candidates)
+    if rank == 0:
+        rank, N = _best_candidate_rank(gt_smiles, candidates)
+    if rank == 0:
+        return 0.0
+    return 1.0 - (rank - 0.5) / N
 
 # ── dataset / record loading ──────────────────────────────────────────────────
 
@@ -328,6 +458,8 @@ def run_asp_pipeline(
                 asp_constraints, atom_counts,
                 output_list_of_smiles=True,
                 timeout=asp_timeout,
+                canonicalize=True,
+                dedup=True
             )
         except Exception as exc:
             log.debug(f"ASP solve error for {count_dict}: {exc}")
@@ -374,6 +506,8 @@ def run_asp_pipeline_unconstrained(
                 asp_constraints, atom_counts,
                 output_list_of_smiles=True,
                 timeout=asp_timeout,
+                canonicalize=True,
+                dedup=True
             )
         except Exception as exc:
             log.debug(f"ASP unconstrained solve error for {count_dict}: {exc}")
@@ -394,10 +528,11 @@ def run_asp_pipeline_unconstrained(
 def evaluate_candidates(
     gt_smiles: str,
     candidate_smiles: list[str],
+    spt_beta: float = 0.5,
 ) -> tuple[float, float, bool]:
     """Compute (max_tanimoto, spt, exact_match) for one test sample.
 
-    Ground-truth SMILES is used only here, strictly for metric computation, 
+    Ground-truth SMILES is used only here, strictly for metric computation,
     not to influence inference or candidate generation.
     """
     if not candidate_smiles:
@@ -424,7 +559,8 @@ def evaluate_candidates(
         if tan > max_tan:
             max_tan = tan
 
-    spt = size_penalised_tanimoto(max_tan, len(candidate_smiles))
+    spt = size_penalised_tanimoto(max_tan, len(candidate_smiles), beta=spt_beta)
+
     return max_tan, spt, exact_match
 
 
@@ -540,6 +676,16 @@ def parse_args() -> argparse.Namespace:
         "--alpha", type=float, default=None,
         help="The value of alpha (significance level) to try and load conformal thresholds for. Defaults to whatever is set in config.yaml."
     )
+    p.add_argument(
+        "--eu-lambda", type=float, default=0.05,
+        help="Cost per candidate λ for expected utility: EU_λ = I[true ∈ M] - λ×|M|. "
+             "Constrained beats unconstrained when λ > ΔCoverage/ΔSetSize (default: 0.01).",
+    )
+    p.add_argument(
+        "--spt-beta", type=float, default=0.5,
+        help="Exponent β for size-penalised Tanimoto: SPT_β = max_tan / (1 + |M|)^β. "
+             "β=0 → pure max_tanimoto, β=1 → linear penalty (default: 0.5).",
+    )
     return p.parse_args()
 
 
@@ -610,11 +756,23 @@ def main() -> None:
             "empty_reason": "",
             "missed_features": "",
             "candidates": "",
+            "reciprocal_rank": 0.0,
+            "reciprocal_rank_unsorted": 0.0,
+            "rank_percentile": 0.0,
+            "rank_percentile_unsorted": 0.0,
+            "rank_percentile_randomised": 0.0,
+            "expected_utility": 0.0,
             "unc_num_candidates": 0,
             "unc_max_tanimoto": 0.0,
             "unc_size_penalised_tanimoto": 0.0,
             "unc_exact_match": False,
             "unc_timed_out": False,
+            "unc_reciprocal_rank": 0.0,
+            "unc_reciprocal_rank_unsorted": 0.0,
+            "unc_rank_percentile": 0.0,
+            "unc_rank_percentile_unsorted": 0.0,
+            "unc_rank_percentile_randomised": 0.0,
+            "unc_expected_utility": 0.0,
         }
 
         # Validate ground-truth SMILES (needed for metrics, not inference).
@@ -691,12 +849,36 @@ def main() -> None:
             n_empty += 1
 
         # ── metric computation (GT SMILES used here) ────────
-        max_tan, spt, exact = evaluate_candidates(gt_smiles_raw, candidates)
+        max_tan, spt, exact = evaluate_candidates(gt_smiles_raw, candidates, spt_beta=args.spt_beta)
+        rr_unsorted = reciprocal_rank(gt_smiles_raw, candidates)
+        rp_unsorted = rank_percentile(gt_smiles_raw, candidates)
 
+        # Sort candidates by model score descending, then compute scored metrics.
+        if pred.raw is not None and candidates:
+            def _score_key(smi):
+                try:
+                    return score_molecule(smi, pred.raw)
+                except Exception:
+                    return float('-inf')
+            candidates.sort(key=_score_key, reverse=True)
+        rr = reciprocal_rank(gt_smiles_raw, candidates)
+        rp = rank_percentile(gt_smiles_raw, candidates)
+
+        rand_candidates = candidates[:]
+        random.shuffle(rand_candidates)
+        rp_rand = rank_percentile(gt_smiles_raw, rand_candidates)
+
+        eu = expected_utility(max_tan, n_cands, args.eu_lambda)
         row.update({
             "max_tanimoto": round(max_tan, 6),
             "size_penalised_tanimoto": round(spt, 6),
             "exact_match": exact,
+            "expected_utility": round(eu, 6),
+            "reciprocal_rank": round(rr, 6),
+            "reciprocal_rank_unsorted": round(rr_unsorted, 6),
+            "rank_percentile": round(rp, 6),
+            "rank_percentile_unsorted": round(rp_unsorted, 6),
+            "rank_percentile_randomised": round(rp_rand, 6),
             "candidates": " | ".join(candidates[: args.max_candidates_saved]),
         })
         # Preserve timeout/empty status; only upgrade to "ok" on clean success.
@@ -718,14 +900,38 @@ def main() -> None:
                 unc_candidates, unc_timed_out = [], False
 
         unc_n_cands = len(unc_candidates)
-        unc_max_tan, unc_spt, unc_exact = evaluate_candidates(gt_smiles_raw, unc_candidates)
 
+        unc_max_tan, unc_spt, unc_exact = evaluate_candidates(gt_smiles_raw, unc_candidates, spt_beta=args.spt_beta)
+        unc_rr_unsorted = reciprocal_rank(gt_smiles_raw, unc_candidates)
+        unc_rp_unsorted = rank_percentile(gt_smiles_raw, unc_candidates)
+
+        if pred.raw is not None and unc_candidates:
+            def _unc_score_key(smi):
+                try:
+                    return score_molecule(smi, pred.raw)
+                except Exception:
+                    return float('-inf')
+            unc_candidates.sort(key=_unc_score_key, reverse=True)
+        unc_rr = reciprocal_rank(gt_smiles_raw, unc_candidates)
+        unc_rp = rank_percentile(gt_smiles_raw, unc_candidates)
+
+        unc_rand_candidates = unc_candidates[:]
+        random.shuffle(unc_rand_candidates)
+        unc_rp_rand = rank_percentile(gt_smiles_raw, unc_rand_candidates)
+
+        unc_eu = expected_utility(unc_max_tan, unc_n_cands, args.eu_lambda)
         row.update({
             "unc_num_candidates": unc_n_cands,
             "unc_max_tanimoto": round(unc_max_tan, 6),
             "unc_size_penalised_tanimoto": round(unc_spt, 6),
             "unc_exact_match": unc_exact,
             "unc_timed_out": unc_timed_out,
+            "unc_reciprocal_rank": round(unc_rr, 6),
+            "unc_reciprocal_rank_unsorted": round(unc_rr_unsorted, 6),
+            "unc_rank_percentile": round(unc_rp, 6),
+            "unc_rank_percentile_unsorted": round(unc_rp_unsorted, 6),
+            "unc_rank_percentile_randomised": round(unc_rp_rand, 6),
+            "unc_expected_utility": round(unc_eu, 6),
         })
 
         # Reclassify: if constrained AND unconstrained both empty (and unc didn't
@@ -773,9 +979,17 @@ def main() -> None:
     con_ok_rows = [r for r in per_sample_rows if r["status"] in ("ok", "empty_network_error")]
     n_con_ok = len(con_ok_rows)
     con_exact = sum(1 for r in con_ok_rows if r["exact_match"])
+    con_eu_arr = np.array([r["expected_utility"] for r in con_ok_rows], dtype=float)
     con_max_tans = np.array([r["max_tanimoto"] for r in con_ok_rows], dtype=float)
     con_spts = np.array([r["size_penalised_tanimoto"] for r in con_ok_rows], dtype=float)
     con_n_cands_arr = np.array([r["num_candidates"] for r in con_ok_rows], dtype=int)
+    con_rr_arr = np.array([r["reciprocal_rank"] for r in con_ok_rows], dtype=float)
+    con_rr_unsorted_arr = np.array([r["reciprocal_rank_unsorted"] for r in con_ok_rows], dtype=float)
+    con_rp_arr = np.array([r["rank_percentile"] for r in con_ok_rows], dtype=float)
+    con_rp_unsorted_arr = np.array([r["rank_percentile_unsorted"] for r in con_ok_rows], dtype=float)
+    con_rp_rand_arr = np.array([r["rank_percentile_randomised"] for r in con_ok_rows], dtype=float)
+    con_exact_rows = [r for r in con_ok_rows if r["exact_match"]]
+    con_rp_rand_exact_arr = np.array([r["rank_percentile_randomised"] for r in con_exact_rows], dtype=float)
 
     # Set 2: paired rows where both constrained and unconstrained succeeded
     # (subset of set 1; used for fair head-to-head comparison).
@@ -785,28 +999,53 @@ def main() -> None:
     paired_max_tans = np.array([r["max_tanimoto"] for r in paired_rows], dtype=float)
     paired_spts = np.array([r["size_penalised_tanimoto"] for r in paired_rows], dtype=float)
     paired_n_cands_arr = np.array([r["num_candidates"] for r in paired_rows], dtype=int)
+    paired_rr_arr = np.array([r["reciprocal_rank"] for r in paired_rows], dtype=float)
+    paired_rr_unsorted_arr = np.array([r["reciprocal_rank_unsorted"] for r in paired_rows], dtype=float)
+    paired_rp_arr = np.array([r["rank_percentile"] for r in paired_rows], dtype=float)
+    paired_rp_unsorted_arr = np.array([r["rank_percentile_unsorted"] for r in paired_rows], dtype=float)
+    paired_rp_rand_arr = np.array([r["rank_percentile_randomised"] for r in paired_rows], dtype=float)
+    paired_exact_rows = [r for r in paired_rows if r["exact_match"]]
+    paired_rp_rand_exact_arr = np.array([r["rank_percentile_randomised"] for r in paired_exact_rows], dtype=float)
+    paired_eu_arr = np.array([r["expected_utility"] for r in paired_rows], dtype=float)
     unc_n_with_cands = sum(1 for r in paired_rows if r["unc_num_candidates"] > 0)
     unc_exact = sum(1 for r in paired_rows if r["unc_exact_match"])
+    unc_eu_arr = np.array([r["unc_expected_utility"] for r in paired_rows], dtype=float)
     unc_max_tans = np.array([r["unc_max_tanimoto"] for r in paired_rows], dtype=float)
     unc_spts = np.array([r["unc_size_penalised_tanimoto"] for r in paired_rows], dtype=float)
     unc_n_cands_arr = np.array([r["unc_num_candidates"] for r in paired_rows], dtype=int)
+    unc_rr_arr = np.array([r["unc_reciprocal_rank"] for r in paired_rows], dtype=float)
+    unc_rr_unsorted_arr = np.array([r["unc_reciprocal_rank_unsorted"] for r in paired_rows], dtype=float)
+    unc_rp_arr = np.array([r["unc_rank_percentile"] for r in paired_rows], dtype=float)
+    unc_rp_unsorted_arr = np.array([r["unc_rank_percentile_unsorted"] for r in paired_rows], dtype=float)
+    unc_rp_rand_arr = np.array([r["unc_rank_percentile_randomised"] for r in paired_rows], dtype=float)
+    unc_exact_rows = [r for r in paired_rows if r["unc_exact_match"]]
+    unc_rp_rand_exact_arr = np.array([r["unc_rank_percentile_randomised"] for r in unc_exact_rows], dtype=float)
 
     # Cases where constrained solved but unconstrained timed out.
     n_con_ok_unc_timeout = sum(1 for r in con_ok_rows if r["unc_timed_out"])
     pct_con_ok_unc_timeout = round(100.0 * n_con_ok_unc_timeout / n_con_ok, 2) if n_con_ok else 0.0
 
-    def _con_metrics(rows, max_t, spts_, n_cands_, n_exact_) -> dict:
+    def _con_metrics(rows, max_t, spts_, n_cands_, n_exact_, eu_arr=None, rr_arr=None, rr_unsorted_arr=None, rp_arr=None, rp_unsorted_arr=None, rp_rand_arr=None, rp_rand_exact_arr=None) -> dict:
         n = len(rows)
-        return {
+        n_exact_for_rp = len(rp_rand_exact_arr) if rp_rand_exact_arr is not None else 0
+        out = {
             "n_metric": n,
             "n_exact_match": n_exact_,
             "pct_exact_match": round(100.0 * n_exact_ / n, 2) if n else 0.0,
+            "mean_expected_utility": round(float(np.mean(eu_arr)), 6) if (n and eu_arr is not None) else 0.0,
             "mean_max_tanimoto": round(float(np.mean(max_t)), 6) if n else 0.0,
             "mean_size_penalised_tanimoto": round(float(np.mean(spts_)), 6) if n else 0.0,
+            "mean_reciprocal_rank": round(float(np.mean(rr_arr)), 6) if (n and rr_arr is not None) else 0.0,
+            "mean_reciprocal_rank_unsorted": round(float(np.mean(rr_unsorted_arr)), 6) if (n and rr_unsorted_arr is not None) else 0.0,
+            "mean_rank_percentile": round(float(np.mean(rp_arr)), 6) if (n and rp_arr is not None) else 0.0,
+            "mean_rank_percentile_unsorted": round(float(np.mean(rp_unsorted_arr)), 6) if (n and rp_unsorted_arr is not None) else 0.0,
+            "mean_rank_percentile_randomised": round(float(np.mean(rp_rand_arr)), 6) if (n and rp_rand_arr is not None) else 0.0,
+            "mean_rank_percentile_randomised_exact": round(float(np.mean(rp_rand_exact_arr)), 6) if n_exact_for_rp else 0.0,
             "mean_num_candidates": round(float(np.mean(n_cands_)), 2) if n else 0.0,
             "mean_num_candidates_exact_match": round(float(np.sum(n_cands_) / (n_exact_)), 2) if n_exact_ else 0.0,
             "median_num_candidates": int(np.median(n_cands_)) if n else 0,
         }
+        return out
 
     summary = {
         "n_evaluated": n_eval,
@@ -820,17 +1059,24 @@ def main() -> None:
         "n_con_ok_unc_timeout": n_con_ok_unc_timeout,
         "pct_con_ok_unc_timeout": pct_con_ok_unc_timeout,
         # All constrained successes (max coverage).
-        "constrained": _con_metrics(con_ok_rows, con_max_tans, con_spts, con_n_cands_arr, con_exact),
+        "constrained": _con_metrics(con_ok_rows, con_max_tans, con_spts, con_n_cands_arr, con_exact, con_eu_arr, con_rr_arr, con_rr_unsorted_arr, con_rp_arr, con_rp_unsorted_arr, con_rp_rand_arr, con_rp_rand_exact_arr),
         # Paired subset: both solves succeeded (for head-to-head comparison).
-        "constrained_paired": _con_metrics(paired_rows, paired_max_tans, paired_spts, paired_n_cands_arr, paired_exact),
+        "constrained_paired": _con_metrics(paired_rows, paired_max_tans, paired_spts, paired_n_cands_arr, paired_exact, paired_eu_arr, paired_rr_arr, paired_rr_unsorted_arr, paired_rp_arr, paired_rp_unsorted_arr, paired_rp_rand_arr, paired_rp_rand_exact_arr),
         "unconstrained": {
             "n_metric": n_paired,
             "n_with_candidates": unc_n_with_cands,
             "n_exact_match": unc_exact,
             "pct_with_candidates": round(100.0 * unc_n_with_cands / n_paired, 2) if n_paired else 0.0,
             "pct_exact_match": round(100.0 * unc_exact / n_paired, 2) if n_paired else 0.0,
+            "mean_expected_utility": round(float(np.mean(unc_eu_arr)), 6) if n_paired else 0.0,
             "mean_max_tanimoto": round(float(np.mean(unc_max_tans)), 6) if n_paired else 0.0,
             "mean_size_penalised_tanimoto": round(float(np.mean(unc_spts)), 6) if n_paired else 0.0,
+            "mean_reciprocal_rank": round(float(np.mean(unc_rr_arr)), 6) if n_paired else 0.0,
+            "mean_reciprocal_rank_unsorted": round(float(np.mean(unc_rr_unsorted_arr)), 6) if n_paired else 0.0,
+            "mean_rank_percentile": round(float(np.mean(unc_rp_arr)), 6) if n_paired else 0.0,
+            "mean_rank_percentile_unsorted": round(float(np.mean(unc_rp_unsorted_arr)), 6) if n_paired else 0.0,
+            "mean_rank_percentile_randomised": round(float(np.mean(unc_rp_rand_arr)), 6) if n_paired else 0.0,
+            "mean_rank_percentile_randomised_exact": round(float(np.mean(unc_rp_rand_exact_arr)), 6) if len(unc_exact_rows) else 0.0,
             "mean_num_candidates": round(float(np.mean(unc_n_cands_arr)), 2) if n_paired else 0.0,
             "median_num_candidates": int(np.median(unc_n_cands_arr)) if n_paired else 0,
         },
@@ -839,6 +1085,8 @@ def main() -> None:
             args.test_set if args.test_set else args.split_pkl
         ),
         "asp_timeout_s": args.asp_timeout,
+        "eu_lambda": args.eu_lambda,
+        "spt_beta": args.spt_beta,
         "manual_threshold": args.threshold,
         "conformal": thresholds is not None,
         "conformal_type": args.thresholds_type if thresholds is not None else None,
@@ -871,7 +1119,11 @@ def main() -> None:
     print(f"\n--- Constrained (all successes, n={n_con_ok}) ---")
     print(f"  Exact match                 : {con_exact}  ({con['pct_exact_match']:.1f}%)")
     print(f"  Mean max-Tanimoto           : {con['mean_max_tanimoto']:.4f}")
+    print(f"  Mean expected utility (λ={args.eu_lambda}) : {con['mean_expected_utility']:.4f}")
     print(f"  Mean SPT                    : {con['mean_size_penalised_tanimoto']:.4f}")
+    print(f"  Mean reciprocal rank        : {con['mean_reciprocal_rank']:.4f}  (unsorted: {con['mean_reciprocal_rank_unsorted']:.4f})")
+    print(f"  Mean rank percentile        : {con['mean_rank_percentile']:.4f}  (unsorted: {con['mean_rank_percentile_unsorted']:.4f}, randomised: {con['mean_rank_percentile_randomised']:.4f})  [exact match or best Tanimoto; 1=top, ~0.5=random]")
+    print(f"  Mean rank percentile (rand) : {con['mean_rank_percentile_randomised_exact']:.4f}  [exact-match rows only; ~0.5=random, n={len(con_exact_rows)}]")
     print(f"  Mean num candidates         : {con['mean_num_candidates']:.1f}")
     print(f"  Mean num candidates (exact) : {con['mean_num_candidates_exact_match']:.1f}")
     print(f"  Median num candidates       : {con['median_num_candidates']}")
@@ -880,7 +1132,14 @@ def main() -> None:
     print(f"  {'':30s} {'Constrained':>12}  {'Unconstrained':>13}")
     print(f"  {'Exact match':30s} {paired_exact:>10}  ({conp['pct_exact_match']:4.1f}%)   {unc_exact:>10}  ({unc['pct_exact_match']:4.1f}%)")
     print(f"  {'Mean max-Tanimoto':30s} {conp['mean_max_tanimoto']:>12.4f}  {unc['mean_max_tanimoto']:>13.4f}")
+    print(f"  {'Mean EU (λ={:.3f})'.format(args.eu_lambda):30s} {conp['mean_expected_utility']:>12.4f}  {unc['mean_expected_utility']:>13.4f}")
     print(f"  {'Mean SPT':30s} {conp['mean_size_penalised_tanimoto']:>12.4f}  {unc['mean_size_penalised_tanimoto']:>13.4f}")
+    print(f"  {'MRR (scored)':30s} {conp['mean_reciprocal_rank']:>12.4f}  {unc['mean_reciprocal_rank']:>13.4f}")
+    print(f"  {'MRR (unsorted)':30s} {conp['mean_reciprocal_rank_unsorted']:>12.4f}  {unc['mean_reciprocal_rank_unsorted']:>13.4f}")
+    print(f"  {'Rank % (scored)':30s} {conp['mean_rank_percentile']:>12.4f}  {unc['mean_rank_percentile']:>13.4f}  [exact match rank; 1=top]")
+    print(f"  {'Rank % (unsorted)':30s} {conp['mean_rank_percentile_unsorted']:>12.4f}  {unc['mean_rank_percentile_unsorted']:>13.4f}  [~0.5=random]")
+    print(f"  {'Rank % (randomised)':30s} {conp['mean_rank_percentile_randomised']:>12.4f}  {unc['mean_rank_percentile_randomised']:>13.4f}  [exact or best Tan.; ~0.5=random]")
+    print(f"  {'Rank % (rand, exact only)':30s} {conp['mean_rank_percentile_randomised_exact']:>12.4f}  {unc['mean_rank_percentile_randomised_exact']:>13.4f}  [exact-match rows only; ~0.5=random]")
     print(f"  {'Mean num candidates':30s} {conp['mean_num_candidates']:>12.1f}  {unc['mean_num_candidates']:>13.1f}")
     print(f"  {'Mean num candidates (exact)':30s} {conp['mean_num_candidates_exact_match']:>12.1f}  {unc['mean_num_candidates']:>13.1f}")
     print(f"  {'Median num candidates':30s} {conp['median_num_candidates']:>12d}  {unc['median_num_candidates']:>13d}")
@@ -888,8 +1147,23 @@ def main() -> None:
         spt_delta = conp['mean_size_penalised_tanimoto'] - unc['mean_size_penalised_tanimoto']
         cand_ratio = (conp['mean_num_candidates'] / unc['mean_num_candidates']
                       if unc['mean_num_candidates'] > 0 else float('nan'))
+        delta_t = unc['mean_max_tanimoto'] - conp['mean_max_tanimoto']
+        delta_m = unc['mean_num_candidates'] - conp['mean_num_candidates']
+        lam_star = delta_t / delta_m if delta_m != 0 else None
+        k_star = 1.0 / lam_star if (lam_star is not None and lam_star > 0) else None
+        summary["eu_lambda_star"] = round(lam_star, 6) if lam_star is not None else None
+        summary["eu_k_star"] = round(k_star, 1) if k_star is not None else None
+        summary["eu_delta_t"] = round(delta_t, 6)
+        summary["eu_delta_m"] = round(delta_m, 2)
         print(f"\n  SPT delta (constrained - unconstrained): {spt_delta:+.4f}")
         print(f"  Candidate count ratio (con/unc):         {cand_ratio:.3f}")
+        print(f"  ΔT̄ (unc - con max-T):                   {delta_t:+.4f}")
+        print(f"  Δ|M| (unc - con set size):               {delta_m:+.1f}")
+        if lam_star is not None:
+            k_str = f"  →  k* = {k_star:.1f}" if k_star is not None else "  →  k* undefined (λ* ≤ 0)"
+            print(f"  λ* = ΔT̄/Δ|M| (EU crossover):           {lam_star:.4f}{k_str}")
+        else:
+            print(f"  λ* = ΔT̄/Δ|M| (EU crossover):           undefined (Δ|M| = 0)")
 
     _save_csv(per_sample_rows, out_dir / "molecule_evaluation_test.csv")
     _save_json(summary, out_dir / "molecule_evaluation_summary.json")
