@@ -4,9 +4,26 @@ import argparse
 import sys
 from pathlib import Path
 
-import numpy as np
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
+import numpy as np
+
+mpl.rcParams.update({
+    "font.family": "STIXGeneral",
+    "mathtext.fontset": "stix",
+    "font.size": 11,
+    "axes.titlesize": 13,
+    "axes.labelsize": 13,
+    "xtick.labelsize": 11,
+    "ytick.labelsize": 10,
+    "legend.fontsize": 11,
+    "figure.dpi": 300,
+    "axes.spines.top": False,
+    "axes.spines.right": False,
+    "pdf.fonttype": 42,
+    "ps.fonttype": 42,
+})
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -44,7 +61,7 @@ def plot(supports: np.ndarray, n_total: int, title_suffix: str, out_path: Path) 
     indices = np.arange(len(supports))
 
     fig, axes = plt.subplots(2, 1, figsize=(16, 10))
-    fig.suptitle(f"MACCS Key Support Distribution  —  {title_suffix}", fontsize=14, fontweight="bold")
+    fig.suptitle(f"MACCS Key Support Distribution  —  {title_suffix}", fontweight="bold")
 
     N = n_total
     norm_s = supports / N
@@ -59,7 +76,7 @@ def plot(supports: np.ndarray, n_total: int, title_suffix: str, out_path: Path) 
     ax1.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f"{int(x):,}"))
     ax1.axhline(N * 0.05, color="red", linestyle="--", linewidth=0.8, label="5% N")
     ax1.axhline(N * 0.95, color="blue", linestyle="--", linewidth=0.8, label="95% N")
-    ax1.legend(fontsize=9)
+    ax1.legend()
 
     ax2 = axes[1]
     max_s = int(supports.max()) if supports.max() > 0 else 1
@@ -79,12 +96,12 @@ def plot(supports: np.ndarray, n_total: int, title_suffix: str, out_path: Path) 
     ax2.text(0.98, 0.95,
              f"support=0: {zero_count}\n1–999: {low_count}\n1k–9.9k: {mid_count}\n≥10k: {high_count}",
              transform=ax2.transAxes, ha="right", va="top",
-             fontsize=9, family="monospace",
+             family="monospace",
              bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
 
     plt.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.savefig(out_path, dpi=300, bbox_inches="tight")
     print(f"Saved: {out_path}")
 
 

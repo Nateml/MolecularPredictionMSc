@@ -100,6 +100,7 @@ import csv
 import json
 import logging
 import math
+import pickle
 import re
 import random
 import sys
@@ -372,7 +373,14 @@ def _aggregate(sample_results: list[dict], feature_specs: list[dict]) -> list[di
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--dataset",   default="data/multitask_mlp_hardcoded.test.json")
+    src = parser.add_mutually_exclusive_group()
+    src.add_argument("--dataset",   default=None,
+                     help="Path to a JSON dataset file (default: data/multitask_mlp_hardcoded.test.json).")
+    src.add_argument("--split-pkl", default=None,
+                     help="Path to a split indices .pkl file (e.g. data/splits/<hash>/test.pkl).")
+    parser.add_argument("--full-dataset", default=None,
+                        help="Full dataset .pkl/.json when using --split-pkl. "
+                             "Defaults to dataset.pkl in the same directory as the split.")
     parser.add_argument("--schema",    default="data/feature_vector_mixed_schema.json")
     parser.add_argument("--n-samples", type=int, default=200,
                         help="ASP-supported records to sample (default: 200).")
@@ -392,21 +400,51 @@ def main() -> None:
     random.seed(args.seed)
 
     # -- Load ----------------------------------------------------------------
-    log.info("Loading dataset: %s", args.dataset)
-    try:
-        import ijson
-        with open(args.dataset, "rb") as f:
-            all_records = []
-            for rec in ijson.items(f, "item"):
-                all_records.append(rec)
-                if args.max_records and len(all_records) >= args.max_records:
-                    break
-    except ImportError:
-        with open(args.dataset) as f:
-            all_records = json.load(f)
-        if args.max_records:
-            all_records = all_records[:args.max_records]
-    log.info("Loaded %d records", len(all_records))
+    if args.split_pkl:
+        split_pkl = Path(args.split_pkl)
+        if not split_pkl.exists():
+            log.error("Split pkl not found: %s", split_pkl)
+            sys.exit(1)
+        full_ds_path = (
+            Path(args.full_dataset) if args.full_dataset
+            else split_pkl.parent / "dataset.pkl"
+        )
+        if not full_ds_path.exists():
+            log.error(
+                "Full dataset not found: %s\n"
+                "Pass --full-dataset explicitly or place dataset.pkl beside the split.",
+                full_ds_path,
+            )
+            sys.exit(1)
+        with open(split_pkl, "rb") as f:
+            indices: list[int] = pickle.load(f)
+        log.info("Loaded %d indices from %s", len(indices), split_pkl.name)
+        if full_ds_path.suffix == ".json":
+            with open(full_ds_path) as f:
+                full_ds = json.load(f)
+            all_records = [full_ds[i] for i in indices]
+        else:
+            with open(full_ds_path, "rb") as f:
+                full_ds = pickle.load(f)
+            all_records = [full_ds._load_record(i) for i in indices]
+        log.info("Loaded %d records from split", len(all_records))
+    else:
+        dataset_path = args.dataset or "data/multitask_mlp_hardcoded.test.json"
+        log.info("Loading dataset: %s", dataset_path)
+        try:
+            import ijson
+            with open(dataset_path, "rb") as f:
+                all_records = []
+                for rec in ijson.items(f, "item"):
+                    all_records.append(rec)
+                    if args.max_records and len(all_records) >= args.max_records:
+                        break
+        except ImportError:
+            with open(dataset_path) as f:
+                all_records = json.load(f)
+            if args.max_records:
+                all_records = all_records[:args.max_records]
+        log.info("Loaded %d records", len(all_records))
 
     with open(args.schema) as f:
         schema = json.load(f)

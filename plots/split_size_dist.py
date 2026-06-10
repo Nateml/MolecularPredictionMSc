@@ -3,11 +3,11 @@
 Distribution of molecule sizes in a dataset split.
 
 Usage:
-    python split_size_dist.py --dataset data/EI_Dataset_MACCS_Continuous.json \
-                              --split data/splits/synthetic-ei/test.pkl
+    python split_size_dist.py --dataset data/multitask_mlp_hardcoded.test.json \
+                              --split data/splits/f9d711f95583/test.pkl
 
-Streams the dataset line-by-line (never loads it fully into memory).
-Requires structural_features.heavy_atom_count in each record.
+Uses the dataset index file (<dataset>.idx) to seek directly to each record
+instead of scanning the full dataset line-by-line.
 """
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ import json
 import pickle
 from collections import Counter
 from pathlib import Path
+from tqdm import tqdm
 
 import numpy as np
 
@@ -31,41 +32,45 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
+def load_index(dataset_path: Path) -> list[tuple[int, int]]:
+    idx_path = dataset_path.with_name(dataset_path.name + ".idx")
+    if not idx_path.exists():
+        raise FileNotFoundError(
+            f"Index file not found: {idx_path}\n"
+            "Run the dataset loader once to generate it."
+        )
+    with open(idx_path, "r", encoding="utf-8") as fh:
+        return [tuple(pair) for pair in json.load(fh)]
+
+
 def main() -> None:
     args = parse_args()
+    dataset_path = Path(args.dataset)
 
     with open(args.split, "rb") as f:
         split_indices: list[int] = pickle.load(f)
 
-    target = set(split_indices)
     print(f"Split: {len(split_indices)} records  (indices {min(split_indices)}–{max(split_indices)})")
+
+    index = load_index(dataset_path)
 
     counts: list[int] = []
     n_missing = 0
-    rec_idx = 0  # dataset record index (0-based, skipping the opening '[' line)
 
-    with open(args.dataset, "r", encoding="utf-8") as f:
-        for raw in f:
-            line = raw.strip().rstrip(",")
-            if not line or line in ("[", "]"):
-                continue
-
-            if rec_idx in target:
-                try:
-                    rec = json.loads(line)
-                    hac = rec.get("structural_features", {}).get("heavy_atom_count")
-                    if hac is None:
-                        # Fall back to counting from smiles via RDKit if available
-                        n_missing += 1
-                    else:
-                        counts.append(int(hac))
-                except json.JSONDecodeError:
+    with open(dataset_path, "rb") as f:
+        for idx in tqdm(split_indices):
+            start, end = index[idx]
+            f.seek(start)
+            raw = f.read(end - start)
+            try:
+                rec = json.loads(raw)
+                hac = rec.get("structural_features", {}).get("heavy_atom_count")
+                if hac is None:
                     n_missing += 1
-
-            rec_idx += 1
-            # Early exit once we've seen all split indices
-            if rec_idx > max(split_indices) + 1:
-                break
+                else:
+                    counts.append(int(hac))
+            except json.JSONDecodeError:
+                n_missing += 1
 
     if not counts:
         print("No heavy_atom_count values found.")
