@@ -87,20 +87,29 @@ def thresholds_path(
     checkpoint_path: Path,
     alpha: int = config.conformal.alpha,
     joint: bool = False,
+    maccs_only: bool = False,
 ) -> Path:
     """Return the path where conformal thresholds for a checkpoint are stored."""
     a_str = f"{alpha:.2f}".replace(".", "")
+    kind = "maccs." if maccs_only else ""
     suffix = "joint.thresholds" if joint else "thresholds"
-    return checkpoint_path.parent / f"{checkpoint_path.stem}.a{a_str}.{suffix}.pt"
+    return checkpoint_path.parent / f"{checkpoint_path.stem}.a{a_str}.{kind}{suffix}.pt"
+
+
+def scores_path(checkpoint_path: Path, maccs_only: bool = False) -> Path:
+    """Return the path where calibration nonconformity scores for a checkpoint are cached."""
+    kind = "maccs." if maccs_only else ""
+    return checkpoint_path.parent / f"{checkpoint_path.stem}.{kind}calib_scores.pt"
 
 
 def load_thresholds(
     checkpoint_path: Path,
     alpha: int = config.conformal.alpha,
     joint: bool = False,
+    maccs_only: bool = False,
 ) -> dict | None:
     """Load conformal thresholds saved alongside a checkpoint, or None if absent."""
-    path = thresholds_path(checkpoint_path, alpha=alpha, joint=joint)
+    path = thresholds_path(checkpoint_path, alpha=alpha, joint=joint, maccs_only=maccs_only)
     if path.exists():
         return torch.load(path, map_location="cpu", weights_only=True)
     return None

@@ -46,7 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))  # Add this lin
 from config import config
 from data.datasets import RawFeatureDataset
 from data.split import splits_dir as get_splits_dir
-from model.loader import load_model, load_thresholds
+from model.loader import load_model, load_thresholds, thresholds_path
 from model.conformal import sets_from_outputs
 import pickle
 
@@ -195,6 +195,16 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--thresholds-path", default=None,
         help="Path to conformal_thresholds.pt. Defaults to <checkpoint_dir>/conformal_thresholds.pt",
+    )
+    p.add_argument(
+        "--thresholds-type", default="joint", choices=["joint", "marginal"],
+        help="Which conformal thresholds to load: 'joint' (default) uses jointly-calibrated "
+             "thresholds (.joint.thresholds.pt); 'marginal' uses per-feature thresholds "
+             "(.thresholds.pt). Ignored when --thresholds-path is set explicitly.",
+    )
+    p.add_argument(
+        "--maccs-only", action="store_true",
+        help="Load MACCS-only conformal thresholds; categorical features fall back to argmax.",
     )
     return p.parse_args()
 
@@ -545,9 +555,14 @@ def _print_continuous_results(
                 f"{r['feature']:<40} {r['mae']:>8.4f} {r['rmse']:>8.4f} "
                 f"{r['coverage']:>6.3f} {r['avg_interval_size']:>10.3f}"
             )
-    macro_mae = np.mean([r["mae"] for r in cont_rows])
-    macro_cov = np.mean([r["coverage"] for r in cont_rows])
-    print(f"\ncontinuous macro-avg: mae={macro_mae:.4f}  coverage={macro_cov:.4f}")
+    macro_mae = float(np.mean([r["mae"] for r in cont_rows]))
+    macro_cov = float(np.mean([r["coverage"] for r in cont_rows]))
+    conf_covs = [r["conformal_coverage"] for r in cont_rows if r.get("conformal_coverage") is not None]
+    macro_conf_cov = float(np.mean(conf_covs)) if conf_covs else None
+    cov_str = f"quantile_cov={macro_cov:.4f}"
+    if macro_conf_cov is not None:
+        cov_str += f"  conformal_cov={macro_conf_cov:.4f}"
+    print(f"\ncontinuous macro-avg: mae={macro_mae:.4f}  {cov_str}")
 
     # Atom count table
     if not atom_rows:
@@ -816,8 +831,14 @@ def main() -> None:
     if args.conformal:
         thresh_path = args.thresholds_path
         if not thresh_path:
-            thresholds = load_thresholds(checkpoint_path, alpha=args.alpha if args.alpha else config.conformal.alpha)
-            print("Found conformal thresholds using checkpoint path and significance level.")
+            use_joint = args.thresholds_type == "joint"
+            _alpha = args.alpha if args.alpha else config.conformal.alpha
+            thresholds = load_thresholds(checkpoint_path, alpha=_alpha, joint=use_joint, maccs_only=args.maccs_only)
+            _tpath = thresholds_path(checkpoint_path, alpha=_alpha, joint=use_joint, maccs_only=args.maccs_only)
+            print(f"Conformal thresholds path : {_tpath.resolve()}")
+            print(f"Exists                    : {_tpath.exists()}")
+            if thresholds is None:
+                print("WARNING: thresholds file not found — falling back to point predictions.")
         else:
             thresholds = torch.load(thresh_path, map_location='cpu')
             print(f"Loaded conformal thresholds from {thresh_path}")
@@ -923,6 +944,8 @@ def main() -> None:
     }
     if args.conformal:
         _run_info["alpha"] = args.alpha if args.alpha else config.conformal.alpha
+        _run_info["thresholds_type"] = args.thresholds_type if not args.thresholds_path else "custom"
+        _run_info["features"] = "maccs_only" if args.maccs_only else "full"
 
     txt_buffer = io.StringIO()
     _orig_stdout = sys.stdout

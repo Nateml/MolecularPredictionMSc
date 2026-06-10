@@ -84,28 +84,25 @@ def quantile_score_fn(
     return scores.squeeze(-1)  # (B, F)
 
 
-def calibrate_model(
+def compute_calibration_scores(
     model,
     calibration_loader: DataLoader,
-    alpha: float,
-    quantiles: list[float] = [0.025, 0.05, 0.5, 0.95, 0.975],
+    maccs_only: bool = False,
     quantile_low_idx: int = 0,
     quantile_high_idx: int = 4,
-    joint: bool = False,
 ) -> dict:
-    """
-    Compute conformal prediction thresholds from a calibration set.
+    """Run inference on the calibration set and return nonconformity scores.
 
-    Expects DataLoader batches of (spectra, targets) where targets contains:
-        "binary": (B, num_binary)
-        "categorical": list of (B,) per feature
-        "continuous": (B, F) normalized continuous values (optional; needed for quantile thresholds)
+    The returned dict can be cached and passed to thresholds_from_scores() to
+    compute thresholds for any alpha without re-running inference.
 
     Returns:
         {
-            "binary_thresholds": (num_binary,),
-            "categorical_thresholds": list of scalars (one per categorical feature),
-            "quantile_thresholds": (F,) or None,
+            "binary": (N, num_binary) nonconformity scores,
+            "categorical": list of (N,) scores per categorical feature,
+            "quantile": (N, F) scores or None,
+            "quantile_low_idx": int,
+            "quantile_high_idx": int,
         }
     """
     model.eval()
@@ -129,36 +126,69 @@ def calibrate_model(
             all_binary_logits.append(outputs["binary"].cpu())
             all_binary_targets.append(binary_targets.cpu())
 
-            if all_categorical_logits is None:
-                n_cat = len(outputs["categorical"])
-                all_categorical_logits = [[] for _ in range(n_cat)]
-                all_categorical_targets = [[] for _ in range(n_cat)]
-            for i, (logits_i, target_i) in enumerate(zip(outputs["categorical"], cat_targets)):
-                all_categorical_logits[i].append(logits_i.cpu())
-                all_categorical_targets[i].append(target_i.cpu())
+            if not maccs_only:
+                if all_categorical_logits is None:
+                    n_cat = len(outputs["categorical"])
+                    all_categorical_logits = [[] for _ in range(n_cat)]
+                    all_categorical_targets = [[] for _ in range(n_cat)]
+                for i, (logits_i, target_i) in enumerate(zip(outputs["categorical"], cat_targets)):
+                    all_categorical_logits[i].append(logits_i.cpu())
+                    all_categorical_targets[i].append(target_i.cpu())
 
-            if "quantile" in outputs and reg_targets is not None:
-                q_out = torch.stack(outputs["quantile"], dim=1)  # (B, F, Q)
-                all_quantile_outputs.append(q_out.cpu())
-                all_quantile_targets.append(reg_targets.cpu())
+                if "quantile" in outputs and reg_targets is not None:
+                    q_out = torch.stack(outputs["quantile"], dim=1)  # (B, F, Q)
+                    all_quantile_outputs.append(q_out.cpu())
+                    all_quantile_targets.append(reg_targets.cpu())
 
     all_binary_logits = torch.cat(all_binary_logits)
     all_binary_targets = torch.cat(all_binary_targets)
-    all_categorical_logits = [torch.cat(l) for l in all_categorical_logits]
-    all_categorical_targets = [torch.cat(t) for t in all_categorical_targets]
+    if not maccs_only:
+        all_categorical_logits = [torch.cat(l) for l in all_categorical_logits]
+        all_categorical_targets = [torch.cat(t) for t in all_categorical_targets]
     all_quantile_outputs = torch.cat(all_quantile_outputs) if all_quantile_outputs else None
     all_quantile_targets = torch.cat(all_quantile_targets) if all_quantile_targets else None
 
     scores_binary = binary_score_fn(all_binary_logits, all_binary_targets)
-    scores_categorical = categorical_score_fn(all_categorical_logits, all_categorical_targets)
+    scores_categorical = (
+        categorical_score_fn(all_categorical_logits, all_categorical_targets)
+        if not maccs_only else []
+    )
     scores_quantile = (
         quantile_score_fn(
             all_quantile_outputs, all_quantile_targets,
-            trained_quantiles=quantiles,
+            trained_quantiles=[],
             low_idx=quantile_low_idx, high_idx=quantile_high_idx,
         )
-        if all_quantile_outputs is not None else None
+        if (not maccs_only and all_quantile_outputs is not None) else None
     )
+
+    return {
+        "binary": scores_binary,
+        "categorical": scores_categorical,
+        "quantile": scores_quantile,
+        "quantile_low_idx": quantile_low_idx,
+        "quantile_high_idx": quantile_high_idx,
+    }
+
+
+def thresholds_from_scores(scores: dict, alpha: float, joint: bool = False) -> dict:
+    """Compute conformal thresholds from precomputed nonconformity scores.
+
+    Args:
+        scores: dict returned by compute_calibration_scores()
+        alpha: miscoverage level; target coverage = 1 - alpha
+        joint: if True, apply rank-based joint calibration
+
+    Returns:
+        {
+            "binary_thresholds": (num_binary,),
+            "categorical_thresholds": list of scalars,
+            "quantile_thresholds": (F,) or None,
+        }
+    """
+    scores_binary = scores["binary"]
+    scores_categorical = scores.get("categorical", [])
+    scores_quantile = scores.get("quantile", None)
 
     n = scores_binary.shape[0]
     level = min((1 - alpha) * (1 + 1 / n), 1.0)
@@ -173,15 +203,10 @@ def calibrate_model(
     )
 
     if joint:
-        # Rank-based joint calibration: for each sample compute the worst-case
-        # empirical CDF rank across all features, then threshold that scalar at
-        # the same level. Avoids dividing by near-zero marginal thresholds (which
-        # causes the ratio-based approach to explode when a feature is easy to predict).
-        # T is a coverage level in [0,1]; thresholds are recomputed at that level.
         def _empirical_ranks(scores: torch.Tensor) -> torch.Tensor:
             """Empirical CDF rank per column. (N, K) -> (N, K) in (0, 1]."""
             N = scores.shape[0]
-            order = scores.argsort(dim=0)  # (N, K)
+            order = scores.argsort(dim=0)
             ranks = torch.empty_like(scores)
             ranks.scatter_(
                 0, order,
@@ -194,16 +219,15 @@ def calibrate_model(
         parts.append(_empirical_ranks(scores_binary).max(dim=1).values)
 
         if scores_categorical:
-            cat_scores = torch.stack(scores_categorical, dim=1)  # (N, num_cat)
+            cat_scores = torch.stack(scores_categorical, dim=1)
             parts.append(_empirical_ranks(cat_scores).max(dim=1).values)
 
         if scores_quantile is not None:
             parts.append(_empirical_ranks(scores_quantile).max(dim=1).values)
 
-        joint_score = torch.stack(parts, dim=1).max(dim=1).values  # (N,)
-        T = torch.quantile(joint_score, level, interpolation="higher")  # scalar in [0, 1]
+        joint_score = torch.stack(parts, dim=1).max(dim=1).values
+        T = torch.quantile(joint_score, level, interpolation="higher")
 
-        # Recompute per-feature thresholds at the joint level T
         q_hat_binary = torch.quantile(scores_binary, T, dim=0, interpolation="higher")
         q_hat_categorical = [
             torch.quantile(s, T, interpolation="higher") for s in scores_categorical
@@ -218,6 +242,31 @@ def calibrate_model(
         "categorical_thresholds": q_hat_categorical,
         "quantile_thresholds": q_hat_quantile,
     }
+
+
+def calibrate_model(
+    model,
+    calibration_loader: DataLoader,
+    alpha: float,
+    quantiles: list[float] = [0.025, 0.05, 0.5, 0.95, 0.975],
+    quantile_low_idx: int = 0,
+    quantile_high_idx: int = 4,
+    joint: bool = False,
+    maccs_only: bool = False,
+) -> dict:
+    """Compute conformal prediction thresholds from a calibration set.
+
+    Convenience wrapper around compute_calibration_scores + thresholds_from_scores.
+    Prefer calling those two functions directly when running multiple alpha values,
+    so that inference runs only once.
+    """
+    scores = compute_calibration_scores(
+        model, calibration_loader,
+        maccs_only=maccs_only,
+        quantile_low_idx=quantile_low_idx,
+        quantile_high_idx=quantile_high_idx,
+    )
+    return thresholds_from_scores(scores, alpha=alpha, joint=joint)
 
 
 def sets_from_outputs(
@@ -259,15 +308,22 @@ def sets_from_outputs(
 
     # Categorical
     categorical_sets = []
-    for logits_i, q_hat_i in zip(outputs["categorical"], thresholds["categorical_thresholds"]):
-        scores = -F.log_softmax(logits_i, dim=-1)
-        include = scores <= q_hat_i.to(logits_i.device)
-        empty = ~include.any(dim=-1)
-        if empty.any():
-            argmax_idx = logits_i.argmax(dim=-1)
-            rows = torch.nonzero(empty, as_tuple=False).squeeze(-1)
-            include[rows, argmax_idx[rows]] = True
-        categorical_sets.append(include)
+    if thresholds["categorical_thresholds"]:
+        for logits_i, q_hat_i in zip(outputs["categorical"], thresholds["categorical_thresholds"]):
+            scores = -F.log_softmax(logits_i, dim=-1)
+            include = scores <= q_hat_i.to(logits_i.device)
+            empty = ~include.any(dim=-1)
+            if empty.any():
+                argmax_idx = logits_i.argmax(dim=-1)
+                rows = torch.nonzero(empty, as_tuple=False).squeeze(-1)
+                include[rows, argmax_idx[rows]] = True
+            categorical_sets.append(include)
+    else:
+        for logits_i in outputs["categorical"]:
+            B, K = logits_i.shape
+            include = torch.zeros(B, K, dtype=torch.bool, device=logits_i.device)
+            include.scatter_(1, logits_i.argmax(dim=-1, keepdim=True), True)
+            categorical_sets.append(include)
     results["categorical"] = categorical_sets
 
     # Quantile

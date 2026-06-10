@@ -45,6 +45,14 @@ _PREDICATE_TO_FVD_KEY: dict[str, int] = {
 
 
 @dataclass
+class RawModelOutputs:
+    """Raw model logits/outputs before thresholding or post-processing."""
+    binary: list[float]
+    categorical: list[list[float]]
+    quantile: list[list[float]]
+
+
+@dataclass
 class RecordPrediction:
     """Predictions for one record, ready for PredictionInterface construction.
 
@@ -65,6 +73,7 @@ class RecordPrediction:
     structural: dict
     count_ranges: dict[str, tuple[int, int]]
     continuous_ranges: dict[str, tuple[float, float]] = field(default_factory=dict)
+    raw: Optional[RawModelOutputs] = None
 
     def __str__(self) -> str:
         lines = ["RecordPrediction"]
@@ -271,6 +280,14 @@ def _count_ranges_from_categorical(
     return count_ranges
 
 
+def _extract_raw_single(outputs: dict, i: int) -> RawModelOutputs:
+    return RawModelOutputs(
+        binary=outputs["binary"][i].tolist(),
+        categorical=[c[i].tolist() for c in outputs.get("categorical", [])],
+        quantile=[q[i].tolist() for q in outputs.get("quantile", [])],
+    )
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -368,6 +385,7 @@ def predict_single(
         structural=structural,
         count_ranges=count_ranges,
         continuous_ranges=continuous_ranges,
+        raw=_extract_raw_single(outputs, 0),
     )
 
 
@@ -450,7 +468,7 @@ def run_inference(
                         count_ranges = _count_ranges_from_categorical(cat_list, onehot_order)
                         continuous_ranges = {}
 
-                    results.append(RecordPrediction(structural, count_ranges, continuous_ranges))
+                    results.append(RecordPrediction(structural, count_ranges, continuous_ranges, raw=_extract_raw_single(outputs, i)))
             else:
                 binary_logits = outputs["binary"]
                 cat_logits_list = outputs.get("categorical", [])
@@ -473,6 +491,6 @@ def run_inference(
                         count_ranges = _count_ranges_from_categorical(cat_i, onehot_order)
                         continuous_ranges = {}
 
-                    results.append(RecordPrediction(structural, count_ranges, continuous_ranges))
+                    results.append(RecordPrediction(structural, count_ranges, continuous_ranges, raw=_extract_raw_single(outputs, i)))
 
     return results

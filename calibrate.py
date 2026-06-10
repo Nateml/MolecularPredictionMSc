@@ -37,8 +37,8 @@ from data.split import (
     TEST_FRACTION,
     SEED,
 )
-from model.loader import load_model, thresholds_path
-from model.conformal import calibrate_model
+from model.loader import load_model, thresholds_path, scores_path
+from model.conformal import compute_calibration_scores, thresholds_from_scores
 
 
 def parse_args() -> argparse.Namespace:
@@ -71,6 +71,10 @@ def parse_args() -> argparse.Namespace:
         "--joint", action="store_true",
         help="Apply joint calibration: scale all thresholds by a single factor T so that "
              "the joint event (all features covered simultaneously) has marginal coverage >= 1-alpha.",
+    )
+    p.add_argument(
+        "--maccs-only", action="store_true",
+        help="Calibrate only MACCS binary features; skip categorical and quantile features.",
     )
     return p.parse_args()
 
@@ -172,15 +176,31 @@ def main() -> None:
             )
 
     mode = "joint" if args.joint else "marginal"
-    print(f"Calibrating on {len(calibration_ds)} samples with alpha={args.alpha} ({mode})...")
-    calib_loader = DataLoader(calibration_ds, batch_size=config.training.batch_size, shuffle=False)
+    scope = " (MACCS only)" if args.maccs_only else ""
     num_q = getattr(model, "num_quantiles", 5)
-    thresholds = calibrate_model(
-        model, calib_loader, alpha=args.alpha,
-        quantile_high_idx=num_q - 1, joint=args.joint,
-    )
 
-    out_path = thresholds_path(checkpoint_path, alpha=args.alpha, joint=args.joint)
+    cached_scores_path = scores_path(checkpoint_path, maccs_only=args.maccs_only)
+    if cached_scores_path.exists():
+        print(f"Loading cached calibration scores from {cached_scores_path}...")
+        scores = torch.load(cached_scores_path, map_location="cpu", weights_only=True)
+        n = scores["binary"].shape[0]
+        print(f"Cached scores: {n} samples.")
+    else:
+        print(f"Calibrating on {len(calibration_ds)} samples with alpha={args.alpha} ({mode}){scope}...")
+        calib_loader = DataLoader(calibration_ds, batch_size=config.training.batch_size, shuffle=False)
+        scores = compute_calibration_scores(
+            model, calib_loader,
+            maccs_only=args.maccs_only,
+            quantile_low_idx=0,
+            quantile_high_idx=num_q - 1,
+        )
+        torch.save(scores, cached_scores_path)
+        print(f"Calibration scores saved to {cached_scores_path}")
+
+    print(f"Computing thresholds (alpha={args.alpha}, {mode}){scope}...")
+    thresholds = thresholds_from_scores(scores, alpha=args.alpha, joint=args.joint)
+
+    out_path = thresholds_path(checkpoint_path, alpha=args.alpha, joint=args.joint, maccs_only=args.maccs_only)
     torch.save(thresholds, out_path)
     print(f"Conformal thresholds saved to {out_path}")
 
