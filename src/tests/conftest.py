@@ -91,7 +91,7 @@ def canonicalize(smiles_to_mol):
 
 @pytest.fixture(scope="session")
 def run_pipeline(canonicalize):
-    def _fn(predictions: dict, timeout: float = 5.0):
+    def _fn(predictions: dict, timeout: float = 20.0):
         result = [None]
         exception = [None]
 

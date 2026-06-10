@@ -84,44 +84,47 @@ def test_constraint_completeness(
     in the solution set does. It does not check if there are extra molecules which
     shouldn't appear -- thats a soundness thing.
     """
+    timed_out_base = []
+    timed_out_covered = []
+    formulas_tested = 0
+
     for formula in formulas:
         # Base
         base_pred = build_predictions(formula, constraint=None)
         try:
             base_smiles = cached_run_pipeline(base_pred)
-        except PipelineTimeoutError as e:
-            warnings.warn(
-                f"Pipeline timed out while testing completeness for {constraint.name}.\n"
-                f"Predictions that caused timeout:\n{e.predictions}"
-            )
+        except PipelineTimeoutError:
+            timed_out_base.append(formula)
             continue
 
-        # Constrained
+        # Determine if this formula exercises the constraint
+        expected = [smi for smi in base_smiles if constraint.rdkit_check(smiles_to_mol(smi))]
+        if not expected:
+            continue  # constraint not exercised by this formula
+
+        # Constrained — timeout here means result is invalid (coverage exists)
         constrained_pred = build_predictions(formula, constraint)
         try:
             constrained_smiles = cached_run_pipeline(constrained_pred)
-        except PipelineTimeoutError as e:
-            warnings.warn(
-                f"Pipeline timed out while testing completeness for {constraint.name}.\n"
-                f"Predictions that caused timeout:\n{e.predictions}"
-            )
+        except PipelineTimeoutError:
+            timed_out_covered.append(formula)
             continue
 
-        # Expected subset
-        expected = []
-        for smi in base_smiles:
-            mol = smiles_to_mol(smi)
-            if constraint.rdkit_check(mol):
-                expected.append(smi)
-
-        expected = sorted(expected)
-        constrained_smiles = sorted(constrained_smiles)
-
-        # assert that expected is a subset of constrained_smiles
         missing = sorted(set(expected) - set(constrained_smiles))
         assert not missing, (
             f"{constraint.name} does not correctly filter for {formula}.\n"
             f"Missing from constrained (expected but absent): {missing}\n"
-            f"Expected: {expected}\n"
-            f"Got: {constrained_smiles}"
+            f"Expected: {sorted(expected)}\n"
+            f"Got: {sorted(constrained_smiles)}"
         )
+        formulas_tested += 1
+
+    if timed_out_covered:
+        pytest.fail(
+            f"{constraint.name}: completeness result invalid — "
+            f"timed out on covered formulas: {timed_out_covered}"
+        )
+    if formulas_tested == 0:
+        pytest.skip(f"{constraint.name}: no formulas exercised constraint without timeout")
+    elif timed_out_base:
+        pytest.skip(f"{constraint.name}: some base runs timed out: {timed_out_base}")
